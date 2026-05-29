@@ -118,7 +118,7 @@ func TestTick_PublishesAndDedupes(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeSource{vectors: []filter.State{matching(), nonMatching()}}
 	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
-		"QFA75": {DestIATA: "YVR", DestICAO: "CYVR"},
+		"QFA75": {OriginIATA: "SYD", OriginICAO: "YSSY", DestIATA: "YVR", DestICAO: "CYVR"},
 	}}
 	cache := newCache()
 	dedupe := newDedupe()
@@ -163,10 +163,10 @@ func TestTick_RouteCacheHit(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeSource{vectors: []filter.State{matching()}}
 	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
-		"QFA75": {DestIATA: "YVR", DestICAO: "CYVR"},
+		"QFA75": {OriginIATA: "SYD", DestIATA: "YVR", DestICAO: "CYVR"},
 	}}
 	cache := newCache()
-	cache.routes["QFA75"] = adsbdb.Route{DestIATA: "CACHED"}
+	cache.routes["QFA75"] = adsbdb.Route{OriginIATA: "SYD", DestIATA: "CACHED"}
 	dedupe := newDedupe()
 	mqtt := &fakeMQTT{}
 	p := newPublisher(src, routes, cache, dedupe, mqtt)
@@ -182,25 +182,49 @@ func TestTick_RouteCacheHit(t *testing.T) {
 	}
 }
 
-func TestTick_RouteLookupFailsStillPublishes(t *testing.T) {
+func TestTick_RouteLookupFailsSuppresses(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeSource{vectors: []filter.State{matching()}}
 	routes := &fakeRoutes{routes: map[string]adsbdb.Route{}} // empty → not found
 	p := newPublisher(src, routes, newCache(), newDedupe(), &fakeMQTT{})
 	mqtt := p.MQTT.(*fakeMQTT)
 
-	if _, err := p.Tick(ctx); err != nil {
+	res, err := p.Tick(ctx)
+	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(mqtt.pubs) != 1 {
-		t.Fatalf("expected publish despite missing route, got %d", len(mqtt.pubs))
+	if len(mqtt.pubs) != 0 {
+		t.Errorf("expected no publish when route lookup fails, got %d", len(mqtt.pubs))
 	}
-	if got := string(mqtt.pubs[0].payload); !contains(got, "QF75") {
-		t.Errorf("payload should still include callsign: %s", got)
+	if len(res.Suppressed) != 1 {
+		t.Errorf("expected suppression, got %+v", res.Suppressed)
 	}
 }
 
-// Tail registrations (e.g. ZUD from "VHZUD") shouldn't trigger an adsbdb call.
+func TestTick_NonSYDDepartureSuppressed(t *testing.T) {
+	ctx := context.Background()
+	src := &fakeSource{vectors: []filter.State{matching()}}
+	// Transit traffic with route data but origin elsewhere.
+	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
+		"QFA75": {OriginIATA: "MEL", OriginICAO: "YMML", DestIATA: "BNE", DestICAO: "YBBN"},
+	}}
+	p := newPublisher(src, routes, newCache(), newDedupe(), &fakeMQTT{})
+	mqtt := p.MQTT.(*fakeMQTT)
+
+	res, err := p.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(mqtt.pubs) != 0 {
+		t.Errorf("expected no publish for non-SYD origin, got %d", len(mqtt.pubs))
+	}
+	if len(res.Suppressed) != 1 {
+		t.Errorf("expected suppression, got %+v", res.Suppressed)
+	}
+}
+
+// Tail registrations (e.g. ZUD from "VHZUD") shouldn't trigger an adsbdb call,
+// and therefore now also get suppressed (no route → no origin confirmation).
 func TestTick_TailRegistrationSkipsRouteLookup(t *testing.T) {
 	ctx := context.Background()
 	s := matching()
@@ -210,14 +234,18 @@ func TestTick_TailRegistrationSkipsRouteLookup(t *testing.T) {
 	p := newPublisher(src, routes, newCache(), newDedupe(), &fakeMQTT{})
 	mqtt := p.MQTT.(*fakeMQTT)
 
-	if _, err := p.Tick(ctx); err != nil {
+	res, err := p.Tick(ctx)
+	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 	if routes.calls != 0 {
 		t.Errorf("expected zero adsbdb calls for tail, got %d", routes.calls)
 	}
-	if len(mqtt.pubs) != 1 {
-		t.Fatalf("expected publish (no route data), got %d", len(mqtt.pubs))
+	if len(mqtt.pubs) != 0 {
+		t.Errorf("expected no publish for tail-only callsign, got %d", len(mqtt.pubs))
+	}
+	if len(res.Suppressed) != 1 {
+		t.Errorf("expected suppression, got %+v", res.Suppressed)
 	}
 }
 

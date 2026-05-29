@@ -1,5 +1,9 @@
-# EventBridge Scheduler (not classic Events) — supports sub-minute rates and
-# is the modern recommended path for cron/rate triggers to Lambda.
+# EventBridge fires the publisher Lambda once per minute. The Lambda
+# detects an EventBridge-shaped event and fans out 4 SQS messages with
+# DelaySeconds = 0/15/30/45. Those messages trigger the same Lambda
+# (via SQS event source mapping) at ~15-second cadence. This is the
+# only way to get sub-minute scheduling on AWS — EventBridge Scheduler
+# rate() expressions ignore the seconds component of start_date.
 
 resource "aws_iam_role" "scheduler" {
   name = "${var.name_prefix}-scheduler"
@@ -34,7 +38,7 @@ resource "aws_scheduler_schedule" "publisher_tick" {
   state                        = "ENABLED"
 
   flexible_time_window {
-    mode = "OFF" # fire exactly on schedule
+    mode = "OFF"
   }
 
   target {

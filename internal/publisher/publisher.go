@@ -126,8 +126,25 @@ func (p *Publisher) Tick(ctx context.Context) (Result, error) {
 
 		route, err := p.resolveRoute(ctx, v.Callsign)
 		if err != nil {
-			log.Warn("route lookup failed; publishing without destination",
+			// We require route data to confirm this is a YSSY departure.
+			// Without it: meandering GA traffic (e.g. RSCU209 from Bankstown)
+			// and tail registrations get falsely classified as overhead.
+			log.Info("suppressing: route unknown",
 				"callsign", v.Callsign, "err", err)
+			res.Suppressed = append(res.Suppressed, key)
+			continue
+		}
+
+		// Only fire on confirmed departures FROM Sydney. Arrivals look
+		// overhead-bound briefly while maneuvering toward the localizer
+		// (observed false positive: JQ224 turned to intercept 16R), and
+		// non-SYD transit traffic doesn't actually matter.
+		if route.OriginIATA != "SYD" && route.OriginICAO != "YSSY" {
+			log.Info("suppressing: not a SYD departure",
+				"callsign", v.Callsign,
+				"origin", route.OriginIATA, "dest", route.DestIATA)
+			res.Suppressed = append(res.Suppressed, key)
+			continue
 		}
 
 		payload := awtrix.Format(v, route, p.Cfg.IconID)

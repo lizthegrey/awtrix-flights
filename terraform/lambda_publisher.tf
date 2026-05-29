@@ -35,6 +35,22 @@ resource "aws_iam_role_policy" "publisher_inline" {
         Action   = "iot:Publish"
         Resource = "arn:aws:iot:${local.region}:${local.account_id}:topic/${var.awtrix_topic}"
       },
+      {
+        # Fanout branch sends 4 delayed messages to its own queue.
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.publisher_fanout.arn
+      },
+      {
+        # SQS event source mapping polls on our behalf using our role.
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+        ]
+        Resource = aws_sqs_queue.publisher_fanout.arn
+      },
     ]
   })
 }
@@ -67,6 +83,7 @@ resource "aws_lambda_function" "publisher" {
       ICON_ID           = var.awtrix_icon_id
       LOG_LEVEL         = var.publisher_log_level
       HONEYCOMB_API_KEY = var.honeycomb_api_key
+      FANOUT_QUEUE_URL  = aws_sqs_queue.publisher_fanout.url
     }
   }
 
