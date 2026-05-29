@@ -10,6 +10,15 @@ close enough overhead and low enough to actually see or hear from a window.
 Tuned for departures off YSSY (Sydney) runway 34L, but the geometry isn't
 hardcoded — pick any observer location.
 
+> **Firmware dependency**: This project drives the AWTRIX over MQTT/TLS to
+> AWS IoT Core. Upstream AWTRIX3 firmware (≤ 0.98) does NOT speak TLS for
+> MQTT. You need the patched fork at
+> [github.com/lizthegrey/awtrix3](https://github.com/lizthegrey/awtrix3),
+> which adds TLS support with ALPN, an MQTT-in-its-own-FreeRTOS-task
+> rework so the handshake doesn't block the display, and various
+> watchdog/HA-Discovery defenses. Flash that firmware first, then deploy
+> this stack.
+
 ## Architecture
 
 ```
