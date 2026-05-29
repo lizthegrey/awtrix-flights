@@ -131,6 +131,16 @@ func (p *Publisher) Tick(ctx context.Context) (Result, error) {
 		}
 
 		payload := awtrix.Format(v, route, p.Cfg.IconID)
+		// Keep the slot in the rotation until the aircraft is well past
+		// overhead. The filter can fire up to 4 min before CPA; with a
+		// fixed 90 s lifetime the display would clear long before the
+		// plane actually arrives. 45 s of grace covers "what was that?!"
+		// glance time after the overflight.
+		lifetime := int(m.SecondsToCPA) + 45
+		if lifetime < 60 {
+			lifetime = 60
+		}
+		payload.Lifetime = lifetime
 		body, err := payload.Encode()
 		if err != nil {
 			log.Error("encode payload", "err", err)
