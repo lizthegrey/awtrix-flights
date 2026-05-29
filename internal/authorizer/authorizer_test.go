@@ -44,7 +44,9 @@ func TestHandle_HappyPath(t *testing.T) {
 	if len(resp.PolicyDocuments) != 1 {
 		t.Fatalf("want 1 policy, got %d", len(resp.PolicyDocuments))
 	}
-	if resp.PrincipalID != "awtrix_103" {
+	// AWS rejects principalIds with non-alphanumeric chars, so the
+	// authorizer strips them: "awtrix_103" → "awtrix103".
+	if resp.PrincipalID != "awtrix103" {
 		t.Errorf("principal = %q", resp.PrincipalID)
 	}
 
@@ -58,8 +60,9 @@ func TestHandle_HappyPath(t *testing.T) {
 	if err := json.Unmarshal([]byte(resp.PolicyDocuments[0]), &doc); err != nil {
 		t.Fatalf("policy not valid JSON: %v", err)
 	}
-	if len(doc.Statement) != 3 {
-		t.Errorf("want 3 statements, got %d", len(doc.Statement))
+	// Connect + Subscribe + Receive + Publish.
+	if len(doc.Statement) != 4 {
+		t.Errorf("want 4 statements, got %d", len(doc.Statement))
 	}
 	for _, s := range doc.Statement {
 		res, _ := s.Resource.(string)

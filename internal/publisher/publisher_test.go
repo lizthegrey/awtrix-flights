@@ -138,7 +138,7 @@ func TestTick_PublishesAndDedupes(t *testing.T) {
 	if mqtt.pubs[0].topic != "test/topic" {
 		t.Errorf("topic = %q", mqtt.pubs[0].topic)
 	}
-	if got := string(mqtt.pubs[0].payload); !contains(got, `"QF75 → YVR 789"`) {
+	if got := string(mqtt.pubs[0].payload); !contains(got, `"QF75 YVR 789"`) {
 		t.Errorf("payload missing expected text: %s", got)
 	}
 	if !dedupe.fired["QFA75"] {

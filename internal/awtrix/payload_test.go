@@ -20,19 +20,19 @@ func TestFormat(t *testing.T) {
 			name:  "qantas_widebody_to_vancouver",
 			state: filter.State{Callsign: "QFA75", ICAOType: "B789"},
 			route: adsbdb.Route{DestIATA: "YVR", DestICAO: "CYVR"},
-			want:  "QF75 → YVR 789",
+			want:  "QF75 YVR 789",
 		},
 		{
 			name:  "jetstar_narrowbody_to_perth",
 			state: filter.State{Callsign: "JST601", ICAOType: "A21N"},
 			route: adsbdb.Route{DestIATA: "PER", DestICAO: "YPPH"},
-			want:  "JQ601 → PER A21N",
+			want:  "JQ601 PER A21N",
 		},
 		{
 			name:  "unknown_callsign_prefix_passes_through",
 			state: filter.State{Callsign: "XYZ99", ICAOType: "B738"},
 			route: adsbdb.Route{DestIATA: "MEL"},
-			want:  "XYZ99 → MEL 738",
+			want:  "XYZ99 MEL 738",
 		},
 		{
 			name:  "no_route_data",
@@ -44,13 +44,13 @@ func TestFormat(t *testing.T) {
 			name:  "fallback_to_icao_dest",
 			state: filter.State{Callsign: "ANZ110", ICAOType: "B789"},
 			route: adsbdb.Route{DestICAO: "NZAA"},
-			want:  "NZ110 → NZAA 789",
+			want:  "NZ110 NZAA 789",
 		},
 		{
 			name:  "missing_callsign_uses_icao24",
 			state: filter.State{ICAO24: "7c1abc", ICAOType: "B789"},
 			route: adsbdb.Route{DestIATA: "MEL"},
-			want:  "→ MEL 789",
+			want:  "MEL 789",
 		},
 	}
 	for _, tc := range tests {
@@ -64,7 +64,7 @@ func TestFormat(t *testing.T) {
 }
 
 func TestEncode(t *testing.T) {
-	p := Payload{Text: "QF75 → YVR 789", Duration: 30, Color: "FFFFFF", PushIcon: 2}
+	p := Payload{Text: "QF75 YVR 789", Duration: 30, Color: "FFFFFF", PushIcon: 2}
 	b, err := p.Encode()
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
@@ -74,7 +74,7 @@ func TestEncode(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got["text"] != "QF75 → YVR 789" {
+	if got["text"] != "QF75 YVR 789" {
 		t.Errorf("text = %v", got["text"])
 	}
 	if _, ok := got["icon"]; ok {

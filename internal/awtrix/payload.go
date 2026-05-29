@@ -15,10 +15,16 @@ import (
 )
 
 // Payload is the AWTRIX custom-app JSON. Only the fields we use are modeled.
+//
+// Important: `duration` controls how long the app is rendered per rotation
+// cycle, NOT how long the app stays in the rotation. To auto-remove a custom
+// app after a period of no updates use `lifetime` (seconds since last push).
+// Otherwise the slot persists forever and the device rotates back to it.
 type Payload struct {
 	Text     string `json:"text"`
 	Icon     string `json:"icon,omitempty"`
-	Duration int    `json:"duration,omitempty"` // seconds the app stays on screen
+	Duration int    `json:"duration,omitempty"` // seconds the app is shown per rotation
+	Lifetime int    `json:"lifetime,omitempty"` // auto-remove app if no updates for N seconds
 	Color    string `json:"color,omitempty"`    // hex RGB, e.g. "FFFFFF"
 	Rainbow  bool   `json:"rainbow,omitempty"`
 	Stack    bool   `json:"stack,omitempty"`    // append to existing rotation instead of replacing
@@ -34,12 +40,14 @@ func Format(state filter.State, route adsbdb.Route, iconID string) Payload {
 	dest := bestDest(route)
 	typeShort := shortType(state.ICAOType)
 
+	// 32 px is tight; every char shaves scroll time. Space-separated only,
+	// no arrows or other decoration.
 	var parts []string
 	if flight != "" {
 		parts = append(parts, flight)
 	}
 	if dest != "" {
-		parts = append(parts, "→ "+dest)
+		parts = append(parts, dest)
 	}
 	if typeShort != "" {
 		parts = append(parts, typeShort)
@@ -52,7 +60,8 @@ func Format(state filter.State, route adsbdb.Route, iconID string) Payload {
 	return Payload{
 		Text:     text,
 		Icon:     iconID,
-		Duration: 30,
+		Duration: 10, // shown 10 s per rotation cycle
+		Lifetime: 90, // and auto-removed if no fresh push within 90 s
 		Color:    "FFFFFF",
 		PushIcon: 2,
 	}

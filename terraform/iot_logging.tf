@@ -31,9 +31,9 @@ resource "aws_iam_role_policy_attachment" "iot_logging" {
 }
 
 resource "aws_iot_logging_options" "main" {
-  role_arn         = aws_iam_role.iot_logging.arn
+  role_arn          = aws_iam_role.iot_logging.arn
   default_log_level = var.iot_log_level
-  disable_all_logs = false
+  disable_all_logs  = false
 
   depends_on = [aws_iam_role_policy_attachment.iot_logging]
 }

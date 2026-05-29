@@ -15,7 +15,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 )
+
+// AWS IoT custom-authorizer constraint: principalId must match this pattern.
+// Underscores, hyphens, etc. are rejected with InvalidResponseException at
+// runtime and AUTHORIZATION_FAILURE in connection logs.
+var nonAlphanum = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
 // Request is the subset of the IoT custom-authorizer event we need.
 // IoT Core sends extra metadata; we ignore what we don't use.
@@ -88,10 +95,15 @@ func (a *Authorizer) Handle(ctx context.Context, req Request) (Response, error) 
 	}
 	return Response{
 		IsAuthenticated:          true,
-		PrincipalID:              a.Policy.AllowedClientID,
+		PrincipalID:              nonAlphanum.ReplaceAllString(a.Policy.AllowedClientID, ""),
 		DisconnectAfterInSeconds: 86400, // force a re-auth daily
-		RefreshAfterInSeconds:    3600,  // refresh policy hourly
-		PolicyDocuments:          []string{policy},
+		// AWS validates RefreshAfterInSeconds in [300, 86400]; anything
+		// outside that range makes AWS reject the entire response with
+		// AUTHORIZATION_FAILURE and the Lambda invocation looks fine in
+		// CloudWatch but the connection never gets a principal. Use the
+		// minimum so cache turns over quickly while staying valid.
+		RefreshAfterInSeconds: 300,
+		PolicyDocuments:       []string{policy},
 	}, nil
 }
 
@@ -103,7 +115,13 @@ func checkCreds(got MQTTProtocolData, want Credentials) bool {
 	if err != nil {
 		return false
 	}
-	uMatch := subtle.ConstantTimeCompare([]byte(got.Username), []byte(want.Username)) == 1
+	// IoT Core passes the full MQTT username, including the
+	// "?x-amz-customauthorizer-name=..." query that routed us here.
+	bareUser := got.Username
+	if i := strings.IndexByte(bareUser, '?'); i >= 0 {
+		bareUser = bareUser[:i]
+	}
+	uMatch := subtle.ConstantTimeCompare([]byte(bareUser), []byte(want.Username)) == 1
 	pMatch := subtle.ConstantTimeCompare(pw, []byte(want.Password)) == 1
 	return uMatch && pMatch
 }
@@ -117,9 +135,17 @@ func buildPolicy(p PolicyConfig) (string, error) {
 	if p.Region == "" || p.AccountID == "" || p.AllowedClientID == "" || p.AllowedTopic == "" {
 		return "", errors.New("incomplete PolicyConfig")
 	}
-	clientARN := fmt.Sprintf("arn:aws:iot:%s:%s:client/%s", p.Region, p.AccountID, p.AllowedClientID)
-	topicARN := fmt.Sprintf("arn:aws:iot:%s:%s:topic/%s", p.Region, p.AccountID, p.AllowedTopic)
-	topicFilterARN := fmt.Sprintf("arn:aws:iot:%s:%s:topicfilter/%s", p.Region, p.AccountID, p.AllowedTopic)
+	// Use AWS IoT policy variables. The string ${iot:ClientId} is NOT a Go
+	// fmt verb — it's interpolated by AWS at policy-evaluation time against
+	// the actual connection's clientId. AWS's docs use this form in the
+	// custom-authorizer examples; literal client ARNs sometimes fail with
+	// AUTHORIZATION_FAILURE even when they look correct.
+	// AWTRIX subscribes to many control topics under its prefix at connect
+	// time (brightness, custom apps, notify, etc.). Granting Subscribe and
+	// Receive over the whole prefix avoids per-topic disconnect cycles.
+	connectARN := fmt.Sprintf("arn:aws:iot:%s:%s:client/${iot:ClientId}", p.Region, p.AccountID)
+	prefixTopicARN := fmt.Sprintf("arn:aws:iot:%s:%s:topic/%s/*", p.Region, p.AccountID, p.AllowedClientID)
+	prefixFilterARN := fmt.Sprintf("arn:aws:iot:%s:%s:topicfilter/%s/*", p.Region, p.AccountID, p.AllowedClientID)
 
 	doc := map[string]any{
 		"Version": "2012-10-17",
@@ -127,17 +153,22 @@ func buildPolicy(p PolicyConfig) (string, error) {
 			{
 				"Effect":   "Allow",
 				"Action":   "iot:Connect",
-				"Resource": clientARN,
+				"Resource": connectARN,
 			},
 			{
 				"Effect":   "Allow",
 				"Action":   "iot:Subscribe",
-				"Resource": topicFilterARN,
+				"Resource": prefixFilterARN,
 			},
 			{
 				"Effect":   "Allow",
 				"Action":   "iot:Receive",
-				"Resource": topicARN,
+				"Resource": prefixTopicARN,
+			},
+			{
+				"Effect":   "Allow",
+				"Action":   "iot:Publish",
+				"Resource": prefixTopicARN,
 			},
 		},
 	}
