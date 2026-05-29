@@ -1,0 +1,18 @@
+# Copy this to terraform.tfvars (gitignored) to override defaults.
+
+# Your exact observer location. Defaults are Ashfield centroid; replace
+# with your roof coordinates for tighter overhead filtering.
+# home_lat = -33.888
+# home_lon = 151.125
+
+# Match this to your AWTRIX device's MQTT client ID (Settings → MQTT).
+# AWTRIX defaults to "awtrix_<chipid>" — check the device UI to see what
+# the chipid is.
+# awtrix_client_id = "awtrix_103"
+# awtrix_topic     = "awtrix_103/custom/overhead"
+
+# Lower to "debug" while validating; "info" for normal operation.
+# publisher_log_level = "info"
+
+# Optional AWTRIX icon. Browse https://developer.lametric.com/icons for IDs.
+# awtrix_icon_id = "11502"

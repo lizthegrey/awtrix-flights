@@ -1,0 +1,17 @@
+bin/
+dist/
+terraform/build/
+*.zip
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl.bak
+*.exe
+*.test
+*.out
+coverage.txt
+.DS_Store
+.envrc
+.env
