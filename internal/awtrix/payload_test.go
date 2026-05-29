@@ -29,6 +29,12 @@ func TestFormat(t *testing.T) {
 			want:  "JQ601 PER A21N",
 		},
 		{
+			name:  "korean_air_to_seoul",
+			state: filter.State{Callsign: "KAL402", ICAOType: "B77W"},
+			route: adsbdb.Route{DestIATA: "ICN", DestICAO: "RKSI"},
+			want:  "KE402 ICN B77W",
+		},
+		{
 			name:  "unknown_callsign_prefix_passes_through",
 			state: filter.State{Callsign: "XYZ99", ICAOType: "B738"},
 			route: adsbdb.Route{DestIATA: "MEL"},

@@ -18,10 +18,23 @@ import (
 )
 
 // airlineCallsign matches a typical ICAO airline callsign: 3-letter operator
-// designator + 1-4 digits + optional trailing letter (positioning suffix).
-// Tail registrations (e.g. "VHZUD" after hyphen stripping) don't match
-// because they're all letters, so we skip their adsbdb route lookup.
-var airlineCallsign = regexp.MustCompile(`^[A-Z]{3}\d{1,4}[A-Z]?$`)
+// designator + 1-4 digits + up to two trailing letters (alphanumeric ATC
+// suffix, e.g. Emirates "UAE3HJ"). Tail registrations (e.g. "VHZUD" after
+// hyphen stripping) don't match because they have no digit, so we skip their
+// adsbdb route lookup.
+var airlineCallsign = regexp.MustCompile(`^[A-Z]{3}\d{1,4}[A-Z]{0,2}$`)
+
+// Departure climb-out override thresholds. When adsbdb mislabels a flight's
+// origin (it keys routes on the callsign's primary leg, so multi-leg flights
+// reusing one callsign look like arrivals), an aircraft that is low, climbing
+// hard, and close to YSSY — having already matched the overhead geometry — is
+// treated as a Sydney departure regardless of the reported origin. This also
+// catches go-arounds, which adsbdb labels as arrivals.
+const (
+	departureMinClimbFpm = 500   // clearly climbing, not level or descending
+	departureMaxAltFt    = 10000 // still in initial climb-out, not transiting over
+	departureNearYSSYNm  = 8     // physically in the airport's departure/go-around area
+)
 
 // AircraftSource returns current ADS-B state vectors near a point.
 type AircraftSource interface {
@@ -135,14 +148,29 @@ func (p *Publisher) Tick(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		// Only fire on confirmed departures FROM Sydney. Arrivals look
-		// overhead-bound briefly while maneuvering toward the localizer
-		// (observed false positive: JQ224 turned to intercept 16R), and
-		// non-SYD transit traffic doesn't actually matter.
-		if route.OriginIATA != "SYD" && route.OriginICAO != "YSSY" {
+		// Only fire on aircraft leaving Sydney. The usual signal is adsbdb
+		// reporting origin = SYD/YSSY. But adsbdb keys routes on a callsign's
+		// primary leg, so tag/continuation flights that reuse one callsign are
+		// mislabeled: e.g. UAE3HJ (a SYD-CHC continuation) resolves to its
+		// inbound DXB-SYD leg, origin DXB. For those, trust the energy state
+		// instead — an aircraft low and climbing hard right next to YSSY that
+		// already matched the overhead geometry is taking off, regardless of
+		// what adsbdb calls the origin. This also catches go-arounds (e.g. a
+		// QF412 missed approach overhead): adsbdb labels them arrivals, but
+		// they climb out over the observer just like a departure.
+		//
+		// Descending arrivals maneuvering toward the localizer (observed false
+		// positive: JQ224 intercepting 16R) fail the climb check, and distant
+		// transit traffic fails the proximity check.
+		fromSYD := route.OriginIATA == "SYD" || route.OriginICAO == "YSSY"
+		climbingOutOfYSSY := v.VertRateFpm >= departureMinClimbFpm &&
+			v.AltitudeFt <= departureMaxAltFt &&
+			geo.DistanceNM(v.Position, geo.YSSY34L) <= departureNearYSSYNm
+		if !fromSYD && !climbingOutOfYSSY {
 			log.Info("suppressing: not a SYD departure",
 				"callsign", v.Callsign,
-				"origin", route.OriginIATA, "dest", route.DestIATA)
+				"origin", route.OriginIATA, "dest", route.DestIATA,
+				"vert_rate_fpm", v.VertRateFpm, "alt_ft", v.AltitudeFt)
 			res.Suppressed = append(res.Suppressed, key)
 			continue
 		}

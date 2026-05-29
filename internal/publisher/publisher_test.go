@@ -249,6 +249,134 @@ func TestTick_TailRegistrationSkipsRouteLookup(t *testing.T) {
 	}
 }
 
+// airlineCallsign must accept ICAO alphanumeric ATC suffixes (1-2 trailing
+// letters, e.g. Emirates "UAE3HJ") while still rejecting tail registrations.
+// UAE3HJ regressed in the field: the old `[A-Z]?` allowed only one trailing
+// letter, so a real overhead SYD-CHC departure was suppressed as "route
+// unknown" and never alerted.
+func TestAirlineCallsignMatch(t *testing.T) {
+	cases := []struct {
+		callsign string
+		want     bool
+	}{
+		{"QFA75", true},    // operator + digits
+		{"UAE412", true},   // operator + 3 digits
+		{"BAW16M", true},   // operator + digits + one suffix letter
+		{"UAE3HJ", true},   // operator + digit + two suffix letters (the regression)
+		{"UAE3HJK", false}, // three suffix letters is not a real callsign
+		{"VHZUD", false},   // tail registration, no digit
+		{"ZUD", false},     // bare tail fragment
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := airlineCallsign.MatchString(c.callsign); got != c.want {
+			t.Errorf("airlineCallsign.MatchString(%q) = %v, want %v", c.callsign, got, c.want)
+		}
+	}
+}
+
+// A SYD departure with an alphanumeric ATC suffix (e.g. UAE3HJ) must get a
+// route lookup and publish. Regression guard for the suppressed overhead pass.
+func TestTick_AlphanumericSuffixSYDDeparturePublishes(t *testing.T) {
+	ctx := context.Background()
+	s := matching()
+	s.Callsign = "UAE3HJ"
+	src := &fakeSource{vectors: []filter.State{s}}
+	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
+		"UAE3HJ": {OriginIATA: "SYD", OriginICAO: "YSSY", DestIATA: "CHC", DestICAO: "NZCH"},
+	}}
+	p := newPublisher(src, routes, newCache(), newDedupe(), &fakeMQTT{})
+	mqtt := p.MQTT.(*fakeMQTT)
+
+	res, err := p.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if routes.calls != 1 {
+		t.Errorf("expected one adsbdb lookup, got %d", routes.calls)
+	}
+	if len(mqtt.pubs) != 1 {
+		t.Fatalf("expected one publish for SYD departure, got %d", len(mqtt.pubs))
+	}
+	if len(res.Published) != 1 || res.Published[0] != "UAE3HJ" {
+		t.Errorf("expected published [UAE3HJ], got %+v", res.Published)
+	}
+}
+
+// A Sydney-based scenario: observer near YSSY, aircraft a few nm south
+// climbing due north over the observer. Used for the climb-out override,
+// which depends on real proximity to the (fixed) YSSY 34L threshold.
+var sydObserver = geo.Point{Lat: -33.90, Lon: 151.15}
+
+func sydClimbOut() filter.State {
+	return filter.State{
+		ICAO24:      "8964b3",
+		Callsign:    "UAE3HJ",
+		ICAOType:    "A388",
+		Position:    geo.Point{Lat: -33.95, Lon: 151.15}, // ~3 nm south of observer, ~1.6 nm from YSSY34L
+		AltitudeFt:  3000,
+		GroundSpdKt: 200,
+		HeadingDeg:  0, // due north, straight over the observer
+		VertRateFpm: 2000,
+	}
+}
+
+func newSydPublisher(src *fakeSource, routes *fakeRoutes) *Publisher {
+	p := newPublisher(src, routes, newCache(), newDedupe(), &fakeMQTT{})
+	p.Cfg = Default("test/topic", sydObserver)
+	return p
+}
+
+// adsbdb mislabels tag/continuation flights by their inbound leg: UAE3HJ
+// (SYD-CHC) resolves to its DXB-SYD leg, origin DXB. The climb-out override
+// must still fire because the aircraft is low, climbing hard, and over YSSY.
+func TestTick_ClimbOutOverrideFiresDespiteNonSYDOrigin(t *testing.T) {
+	ctx := context.Background()
+	src := &fakeSource{vectors: []filter.State{sydClimbOut()}}
+	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
+		"UAE3HJ": {OriginIATA: "DXB", OriginICAO: "OMDB", DestIATA: "SYD", DestICAO: "YSSY"},
+	}}
+	p := newSydPublisher(src, routes)
+	mqtt := p.MQTT.(*fakeMQTT)
+
+	res, err := p.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(mqtt.pubs) != 1 {
+		t.Fatalf("expected one publish via climb-out override, got %d", len(mqtt.pubs))
+	}
+	if len(res.Published) != 1 || res.Published[0] != "UAE3HJ" {
+		t.Errorf("expected published [UAE3HJ], got %+v", res.Published)
+	}
+}
+
+// A non-SYD-origin aircraft that is NOT climbing out (level transit / arrival)
+// over the same spot must stay suppressed — the override hinges on the climb.
+func TestTick_NonSYDOriginNotClimbingSuppressed(t *testing.T) {
+	ctx := context.Background()
+	s := sydClimbOut()
+	s.Callsign = "UAE412"
+	s.VertRateFpm = -500 // descending toward a landing, not a departure
+	src := &fakeSource{vectors: []filter.State{s}}
+	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
+		"UAE412": {OriginIATA: "DXB", OriginICAO: "OMDB", DestIATA: "SYD", DestICAO: "YSSY"},
+	}}
+	p := newSydPublisher(src, routes)
+	mqtt := p.MQTT.(*fakeMQTT)
+
+	res, err := p.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(mqtt.pubs) != 0 {
+		t.Errorf("expected no publish for descending non-SYD-origin flight, got %d", len(mqtt.pubs))
+	}
+	if len(res.Suppressed) != 1 {
+		t.Errorf("expected suppression, got %+v", res.Suppressed)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

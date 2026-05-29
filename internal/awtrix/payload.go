@@ -135,6 +135,7 @@ var icaoToIATA = map[string]string{
 	"VBB": "BL", // Bonza
 	"REX": "ZL", // Regional Express
 	"ANZ": "NZ", // Air New Zealand
+	"KAL": "KE", // Korean Air
 	"UAE": "EK", // Emirates
 	"QTR": "QR", // Qatar
 	"SIA": "SQ", // Singapore

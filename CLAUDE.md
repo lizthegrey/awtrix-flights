@@ -45,7 +45,38 @@ Observed during real operation; don't accidentally regress:
 
 - **Arrivals to SYD** look overhead-bound briefly while joining the
   southbound-flow localizer. Suppressed by requiring route
-  origin = SYD/YSSY.
+  origin = SYD/YSSY — OR, when origin isn't SYD, by a climb-out
+  override (see below). Descending arrivals fail the override's climb
+  check, so they stay suppressed either way.
+
+## The departure gate and adsbdb's origin caveat
+
+A flight fires only if it's leaving Sydney. The primary signal is
+adsbdb reporting route origin = SYD/YSSY. But **adsbdb keys routes on
+the callsign's primary leg**, so tag/continuation flights that reuse
+one callsign are mislabeled: e.g. Emirates `UAE3HJ` flies DXB-SYD-CHC
+on one callsign, and adsbdb only knows it as DXB-SYD (origin DXB). On
+the SYD-CHC leg it's physically departing YSSY but adsbdb calls it a
+Dubai-origin arrival. So origin-matching alone misses it.
+
+The fix (`cmd`/`internal/publisher`): a **climb-out override** — when
+origin isn't SYD, fire anyway if the aircraft is climbing
+(`VertRateFpm ≥ 500`), low (`≤ 10000 ft`), and within 8 NM of the 34L
+threshold, having already matched the overhead geometry. This trusts
+the energy state over adsbdb's origin field. Bonus: it also catches
+**go-arounds / missed approaches** (adsbdb labels them arrivals, but
+they climb out over the observer just like a departure). Don't
+re-tighten this to origin-only without re-checking UAE3HJ.
+
+Also note **two callsign-format gotchas** in `internal/publisher`
+(`airlineCallsign` regex) and `internal/awtrix` (`icaoToIATA` /
+`niceFlight`): ICAO ATC callsigns can carry a 2-letter alphanumeric
+suffix (`UAE3HJ`), so the regex allows `[A-Z]{0,2}` after the digits,
+not `[A-Z]?`. And the display's ICAO→IATA prefix map must list any
+operator you want shortened (`KAL`→`KE`, etc.) or it renders the raw
+ICAO prefix. adsbdb's `callsign_iata` is just a mechanical prefix swap
+(`UAE3HJ`→`EK3HJ`), NOT the marketing flight number (`EK412`), so we
+can't show the commercial number from adsbdb alone.
 - **Meandering GA traffic** from nearby small-airport feeders match
   the geometry but aren't real overflight events. Suppressed by
   requiring an adsbdb route at all (the same predicate also catches
