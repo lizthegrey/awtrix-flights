@@ -129,6 +129,7 @@ func shortType(t string) string {
 // Not exhaustive — anything missing just renders with its ICAO prefix.
 var icaoToIATA = map[string]string{
 	"QFA": "QF", // Qantas
+	"QLK": "QF", // QantasLink (squawks QLK; routes filed under QFA)
 	"QJE": "QF", // Qantas Jetconnect (NZ subsidiary)
 	"JST": "JQ", // Jetstar
 	"VOZ": "VA", // Virgin Australia

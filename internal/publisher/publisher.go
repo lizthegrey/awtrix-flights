@@ -24,6 +24,31 @@ import (
 // adsbdb route lookup.
 var airlineCallsign = regexp.MustCompile(`^[A-Z]{3}\d{1,4}[A-Z]{0,2}$`)
 
+// routeCallsignAlias maps an operator's on-the-wire ICAO designator to the
+// carrier its routes are actually FILED under in adsbdb's route table. adsbdb
+// does a literal callsign-string lookup with no operator/alias translation, so
+// a flight that squawks one code but is scheduled under another 404s on origin
+// lookup and gets dropped by the "require a route at all" GA suppression.
+//
+// QantasLink (Eastern Australia / National Jet, ICAO "QLK") flies — including
+// its A220s — under callsigns squawked as "QLK####", but Qantas group files
+// those routes under mainline "QFA####" with the same flight number. So we
+// rewrite the prefix before looking up the route. The display still uses the
+// original wire callsign (see internal/awtrix icaoToIATA "QLK"→"QF").
+var routeCallsignAlias = map[string]string{
+	"QLK": "QFA", // QantasLink → Qantas mainline route filing
+}
+
+// routeCallsign returns the callsign to query adsbdb with, rewriting the
+// 3-letter operator prefix per routeCallsignAlias. Input must already match
+// airlineCallsign (3 letters + digits + optional suffix).
+func routeCallsign(callsign string) string {
+	if alias, ok := routeCallsignAlias[callsign[:3]]; ok {
+		return alias + callsign[3:]
+	}
+	return callsign
+}
+
 // Departure climb-out override thresholds. When adsbdb mislabels a flight's
 // origin (it keys routes on the callsign's primary leg, so multi-leg flights
 // reusing one callsign look like arrivals), an aircraft that is low, climbing
@@ -214,6 +239,10 @@ func (p *Publisher) resolveRoute(ctx context.Context, callsign string) (adsbdb.R
 	if !airlineCallsign.MatchString(callsign) {
 		return adsbdb.Route{}, fmt.Errorf("non-airline callsign %q", callsign)
 	}
+	// Rewrite operator prefixes that file routes under a different carrier
+	// (e.g. QantasLink QLK→QFA) before the cache key and live lookup, so both
+	// the squawked and filed forms resolve to the same route entry.
+	callsign = routeCallsign(callsign)
 	if r, err := p.Cache.GetRoute(ctx, callsign); err == nil {
 		return r, nil
 	}

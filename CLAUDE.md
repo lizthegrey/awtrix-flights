@@ -77,6 +77,20 @@ operator you want shortened (`KAL`→`KE`, etc.) or it renders the raw
 ICAO prefix. adsbdb's `callsign_iata` is just a mechanical prefix swap
 (`UAE3HJ`→`EK3HJ`), NOT the marketing flight number (`EK412`), so we
 can't show the commercial number from adsbdb alone.
+
+A related-but-distinct adsbdb miss: **operator codes that file routes
+under a different carrier.** adsbdb does a literal callsign-string
+lookup with no alias translation, so a flight squawking one ICAO code
+whose route is scheduled under another just 404s. QantasLink (ICAO
+`QLK`, including its A220s) squawks `QLK####` but Qantas group files
+those routes under mainline `QFA####` with the same number — so
+`/v0/callsign/QLK1944` is 404 while `QFA1944` returns SYD-origin route
+data. `routeCallsignAlias` in `internal/publisher` rewrites the prefix
+(`QLK`→`QFA`) before the cache key and live lookup; the display keeps
+the wire callsign and shortens it via `icaoToIATA` (`QLK`→`QF`). This
+is NOT the same as UAE3HJ (same callsign, wrong leg) — it's a different
+callsign string entirely. Add new entries to `routeCallsignAlias` for
+other subsidiaries that file under a parent (don't try to infer it).
 - **Meandering GA traffic** from nearby small-airport feeders match
   the geometry but aren't real overflight events. Suppressed by
   requiring an adsbdb route at all (the same predicate also catches

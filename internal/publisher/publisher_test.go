@@ -159,6 +159,55 @@ func TestTick_PublishesAndDedupes(t *testing.T) {
 	}
 }
 
+func TestRouteCallsign(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"QLK1944", "QFA1944"},   // QantasLink → Qantas mainline filing
+		{"QLK1234A", "QFA1234A"}, // suffix preserved
+		{"QFA75", "QFA75"},       // already mainline, unchanged
+		{"VOZ123", "VOZ123"},     // unrelated operator, unchanged
+		{"UAE3HJ", "UAE3HJ"},     // alphanumeric-suffix callsign, unchanged
+	}
+	for _, c := range cases {
+		if got := routeCallsign(c.in); got != c.want {
+			t.Errorf("routeCallsign(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// A QantasLink flight squawks "QLK####" but adsbdb only has the route filed
+// under mainline "QFA####"; the lookup must rewrite the prefix so the SYD
+// departure resolves instead of 404ing and being suppressed.
+func TestTick_QantasLinkResolvesViaQFA(t *testing.T) {
+	ctx := context.Background()
+	s := matching()
+	s.Callsign = "QLK1944"
+	s.ICAOType = "A21N"
+	src := &fakeSource{vectors: []filter.State{s}}
+	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
+		"QFA1944": {OriginIATA: "SYD", OriginICAO: "YSSY", DestIATA: "CBR", DestICAO: "YSCB"},
+	}}
+	cache := newCache()
+	mqtt := &fakeMQTT{}
+	p := newPublisher(src, routes, cache, newDedupe(), mqtt)
+
+	res, err := p.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(res.Published) != 1 {
+		t.Fatalf("expected QantasLink departure to fire, got %+v", res)
+	}
+	if got := string(mqtt.pubs[0].payload); !contains(got, `"QF1944 CBR A21N"`) {
+		t.Errorf("payload missing expected text: %s", got)
+	}
+	// Cache should be keyed under the rewritten (filed) callsign.
+	if _, ok := cache.routes["QFA1944"]; !ok {
+		t.Errorf("expected route cached under QFA1944, got keys %v", cache.routes)
+	}
+}
+
 func TestTick_RouteCacheHit(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeSource{vectors: []filter.State{matching()}}
