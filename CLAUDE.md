@@ -44,29 +44,43 @@ Don't re-propose these without new evidence:
 Observed during real operation; don't accidentally regress:
 
 - **Arrivals to SYD** look overhead-bound briefly while joining the
-  southbound-flow localizer. Suppressed by requiring route
-  origin = SYD/YSSY — OR, when origin isn't SYD, by a climb-out
-  override (see below). Descending arrivals fail the override's climb
-  check, so they stay suppressed either way.
+  localizer (e.g. 16R approaches from the north, over the observer).
+  Suppressed by the filter's `IgnoreDescending` check: a descending
+  aircraft is an arrival, not a departure or transit, so it's dropped
+  before it's even a candidate. (Level and climbing traffic is kept.)
 
-## The departure gate and adsbdb's origin caveat
+## The firing rule: geometry + airline callsign, NOT origin
 
-A flight fires only if it's leaving Sydney. The primary signal is
-adsbdb reporting route origin = SYD/YSSY. But **adsbdb keys routes on
-the callsign's primary leg**, so tag/continuation flights that reuse
-one callsign are mislabeled: e.g. Emirates `UAE3HJ` flies DXB-SYD-CHC
-on one callsign, and adsbdb only knows it as DXB-SYD (origin DXB). On
-the SYD-CHC leg it's physically departing YSSY but adsbdb calls it a
-Dubai-origin arrival. So origin-matching alone misses it.
+A flight fires if it matches the **overhead CPA geometry** (cross-track
+≤ 1.5 NM, projected altitude-at-CPA ≤ 8000 ft, CPA within the time
+window, not descending) **and** carries an **airline-style callsign**.
+That's it. There is deliberately **no requirement that the route start
+or end at SYD** — any airliner flying the overhead corridor is shown,
+departure or transit. The use case is "what's that plane overhead",
+not "what's departing".
 
-The fix (`cmd`/`internal/publisher`): a **climb-out override** — when
-origin isn't SYD, fire anyway if the aircraft is climbing
-(`VertRateFpm ≥ 500`), low (`≤ 10000 ft`), and within 8 NM of the 34L
-threshold, having already matched the overhead geometry. This trusts
-the energy state over adsbdb's origin field. Bonus: it also catches
-**go-arounds / missed approaches** (adsbdb labels them arrivals, but
-they climb out over the observer just like a departure). Don't
-re-tighten this to origin-only without re-checking UAE3HJ.
+This replaced an earlier departure-only design (origin = SYD/YSSY gate
+plus a climb-out override keyed to the 34L threshold). Both are gone.
+History worth keeping in mind so you don't re-introduce them:
+
+- **adsbdb keys routes on the callsign's primary leg**, so the old
+  origin gate missed tag/continuation flights: e.g. Emirates `UAE3HJ`
+  flies DXB-SYD-CHC on one callsign and adsbdb only knows it as DXB-SYD
+  (origin DXB). On the SYD-CHC leg it's physically departing YSSY but
+  adsbdb calls it a Dubai-origin arrival. Geometry-only firing makes
+  this a non-issue — it fires on the energy/geometry regardless of what
+  adsbdb thinks the origin is. (This also naturally catches go-arounds
+  and missed approaches: they climb back over the observer.)
+- **The route lookup is now display-only**, best-effort. A 404 (adsbdb
+  route-table gaps, e.g. `CXA802` SYD-XMN) or a wrong origin no longer
+  suppresses — we publish without a destination. So adsbdb's
+  incompleteness for Pacific/Asian flight numbers costs a missing dest
+  string, not a missed overflight.
+- **The airline-callsign gate is what keeps GA/noise out** now that the
+  route requirement is gone — see the meandering-GA note below.
+
+Don't re-add an origin gate without re-checking UAE3HJ and CXA802;
+both are reasons it was removed.
 
 Also note **two callsign-format gotchas** in `internal/publisher`
 (`airlineCallsign` regex) and `internal/awtrix` (`icaoToIATA` /
@@ -92,9 +106,13 @@ is NOT the same as UAE3HJ (same callsign, wrong leg) — it's a different
 callsign string entirely. Add new entries to `routeCallsignAlias` for
 other subsidiaries that file under a parent (don't try to infer it).
 - **Meandering GA traffic** from nearby small-airport feeders match
-  the geometry but aren't real overflight events. Suppressed by
-  requiring an adsbdb route at all (the same predicate also catches
-  tail-registration callsigns with no airline route lookup).
+  the geometry (the constant-heading projection false-positives while
+  they turn) but aren't real overflight events. Suppressed by the
+  **airline-callsign gate**: GA tends to fly tail-registration
+  callsigns (`VHABC`), which fail `airlineCallsign` and never fire.
+  This is the gate that used to be implicit in "require an adsbdb
+  route"; it's now explicit and is the only thing standing between
+  geometry and a publish for non-airline contacts.
 - **SIDs aren't always flown exactly.** ATC vectoring, aircraft
   performance variation, and shared initial legs mean published
   departure procedures off the same runway can produce visually-

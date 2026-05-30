@@ -231,7 +231,9 @@ func TestTick_RouteCacheHit(t *testing.T) {
 	}
 }
 
-func TestTick_RouteLookupFailsSuppresses(t *testing.T) {
+// A route 404 (adsbdb gap, e.g. CXA802) no longer suppresses: route data is
+// display-only, so we publish the overhead flight without a destination.
+func TestTick_RouteLookupFailsStillPublishes(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeSource{vectors: []filter.State{matching()}}
 	routes := &fakeRoutes{routes: map[string]adsbdb.Route{}} // empty → not found
@@ -242,18 +244,23 @@ func TestTick_RouteLookupFailsSuppresses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(mqtt.pubs) != 0 {
-		t.Errorf("expected no publish when route lookup fails, got %d", len(mqtt.pubs))
+	if routes.calls != 1 {
+		t.Errorf("expected one (failed) adsbdb lookup, got %d", routes.calls)
 	}
-	if len(res.Suppressed) != 1 {
-		t.Errorf("expected suppression, got %+v", res.Suppressed)
+	if len(res.Published) != 1 {
+		t.Fatalf("expected publish despite route miss, got %+v", res)
+	}
+	// Flight + type render; no destination segment.
+	if got := string(mqtt.pubs[0].payload); !contains(got, `"QF75 789"`) {
+		t.Errorf("expected destination-less payload, got: %s", got)
 	}
 }
 
-func TestTick_NonSYDDepartureSuppressed(t *testing.T) {
+// Non-SYD origin (transit overflight or an adsbdb-mislabeled departure) now
+// fires on geometry alone — the old origin gate is gone.
+func TestTick_NonSYDOriginTransitPublishes(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeSource{vectors: []filter.State{matching()}}
-	// Transit traffic with route data but origin elsewhere.
 	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
 		"QFA75": {OriginIATA: "MEL", OriginICAO: "YMML", DestIATA: "BNE", DestICAO: "YBBN"},
 	}}
@@ -264,17 +271,18 @@ func TestTick_NonSYDDepartureSuppressed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(mqtt.pubs) != 0 {
-		t.Errorf("expected no publish for non-SYD origin, got %d", len(mqtt.pubs))
+	if len(res.Published) != 1 {
+		t.Fatalf("expected non-SYD overflight to publish, got %+v", res)
 	}
-	if len(res.Suppressed) != 1 {
-		t.Errorf("expected suppression, got %+v", res.Suppressed)
+	if got := string(mqtt.pubs[0].payload); !contains(got, "BNE") {
+		t.Errorf("expected dest BNE in payload, got: %s", got)
 	}
 }
 
-// Tail registrations (e.g. ZUD from "VHZUD") shouldn't trigger an adsbdb call,
-// and therefore now also get suppressed (no route → no origin confirmation).
-func TestTick_TailRegistrationSkipsRouteLookup(t *testing.T) {
+// Tail registrations (e.g. ZUD from "VHZUD") fail the airline-callsign gate, so
+// they're suppressed before any adsbdb call — this is what keeps GA out now
+// that origin is no longer required.
+func TestTick_TailRegistrationSuppressed(t *testing.T) {
 	ctx := context.Background()
 	s := matching()
 	s.Callsign = "ZUD" // tail without VH- prefix that ADS-B sometimes reports
@@ -353,8 +361,7 @@ func TestTick_AlphanumericSuffixSYDDeparturePublishes(t *testing.T) {
 }
 
 // A Sydney-based scenario: observer near YSSY, aircraft a few nm south
-// climbing due north over the observer. Used for the climb-out override,
-// which depends on real proximity to the (fixed) YSSY 34L threshold.
+// climbing due north over the observer — realistic overhead geometry.
 var sydObserver = geo.Point{Lat: -33.90, Lon: 151.15}
 
 func sydClimbOut() filter.State {
@@ -362,7 +369,7 @@ func sydClimbOut() filter.State {
 		ICAO24:      "8964b3",
 		Callsign:    "UAE3HJ",
 		ICAOType:    "A388",
-		Position:    geo.Point{Lat: -33.95, Lon: 151.15}, // ~3 nm south of observer, ~1.6 nm from YSSY34L
+		Position:    geo.Point{Lat: -33.95, Lon: 151.15}, // ~3 nm south of observer
 		AltitudeFt:  3000,
 		GroundSpdKt: 200,
 		HeadingDeg:  0, // due north, straight over the observer
@@ -377,9 +384,10 @@ func newSydPublisher(src *fakeSource, routes *fakeRoutes) *Publisher {
 }
 
 // adsbdb mislabels tag/continuation flights by their inbound leg: UAE3HJ
-// (SYD-CHC) resolves to its DXB-SYD leg, origin DXB. The climb-out override
-// must still fire because the aircraft is low, climbing hard, and over YSSY.
-func TestTick_ClimbOutOverrideFiresDespiteNonSYDOrigin(t *testing.T) {
+// (SYD-CHC) resolves to its DXB-SYD leg, origin DXB. It now fires on geometry
+// alone — climbing, airline callsign, over the observer — regardless of the
+// reported origin. (Also covers go-arounds, which adsbdb labels as arrivals.)
+func TestTick_NonSYDOriginClimbingPublishes(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeSource{vectors: []filter.State{sydClimbOut()}}
 	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
@@ -393,16 +401,40 @@ func TestTick_ClimbOutOverrideFiresDespiteNonSYDOrigin(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 	if len(mqtt.pubs) != 1 {
-		t.Fatalf("expected one publish via climb-out override, got %d", len(mqtt.pubs))
+		t.Fatalf("expected one publish, got %d", len(mqtt.pubs))
 	}
 	if len(res.Published) != 1 || res.Published[0] != "UAE3HJ" {
 		t.Errorf("expected published [UAE3HJ], got %+v", res.Published)
 	}
 }
 
-// A non-SYD-origin aircraft that is NOT climbing out (level transit / arrival)
-// over the same spot must stay suppressed — the override hinges on the climb.
-func TestTick_NonSYDOriginNotClimbingSuppressed(t *testing.T) {
+// A level transit overflight (non-SYD origin, 0 fpm) fires: the use case is
+// "what's overhead", and the 8000 ft alt-at-CPA cap already excludes high
+// cruise, so a low level airliner over the observer is shown.
+func TestTick_LevelTransitOverflightPublishes(t *testing.T) {
+	ctx := context.Background()
+	s := sydClimbOut()
+	s.Callsign = "SIA231"
+	s.VertRateFpm = 0 // level, e.g. on a SID step or low transit
+	src := &fakeSource{vectors: []filter.State{s}}
+	routes := &fakeRoutes{routes: map[string]adsbdb.Route{
+		"SIA231": {OriginIATA: "MEL", OriginICAO: "YMML", DestIATA: "SIN", DestICAO: "WSSS"},
+	}}
+	p := newSydPublisher(src, routes)
+
+	res, err := p.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(res.Published) != 1 {
+		t.Fatalf("expected level overflight to publish, got %+v", res)
+	}
+}
+
+// A descending arrival over the observer (e.g. joining 16R from the north) is
+// excluded upstream by the filter's IgnoreDescending check — it never becomes
+// a candidate, so it's neither published nor counted as suppressed.
+func TestTick_DescendingArrivalFilteredOut(t *testing.T) {
 	ctx := context.Background()
 	s := sydClimbOut()
 	s.Callsign = "UAE412"
@@ -418,11 +450,11 @@ func TestTick_NonSYDOriginNotClimbingSuppressed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if len(mqtt.pubs) != 0 {
-		t.Errorf("expected no publish for descending non-SYD-origin flight, got %d", len(mqtt.pubs))
+	if res.Candidates != 0 {
+		t.Errorf("descending arrival should not be a candidate, got %d", res.Candidates)
 	}
-	if len(res.Suppressed) != 1 {
-		t.Errorf("expected suppression, got %+v", res.Suppressed)
+	if len(mqtt.pubs) != 0 {
+		t.Errorf("expected no publish for descending arrival, got %d", len(mqtt.pubs))
 	}
 }
 

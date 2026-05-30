@@ -47,12 +47,12 @@ type Config struct {
 func Default(observer geo.Point) Config {
 	return Config{
 		Observer:         observer,
-		MaxCrossTrackNM:  1.5,   // ~2.8 km lateral — close enough to see/hear from window
-		MaxAltAtCPAFt:    8000,  // higher than this and you won't really notice
-		MaxSecondsToCPA:  240,   // 4 minutes — enough lead time but not so far we lose accuracy
-		MinSecondsToCPA:  -30,   // tiny grace so we don't flap right as it overflies
-		MinGroundSpdKt:   60,    // exclude helicopters hovering, ground vehicles
-		IgnoreDescending: false, // some arrivals also fly over observer; let alt-at-CPA filter handle it
+		MaxCrossTrackNM:  1.5,  // ~2.8 km lateral — close enough to see/hear from window
+		MaxAltAtCPAFt:    8000, // higher than this and you won't really notice
+		MaxSecondsToCPA:  240,  // 4 minutes — enough lead time but not so far we lose accuracy
+		MinSecondsToCPA:  -30,  // tiny grace so we don't flap right as it overflies
+		MinGroundSpdKt:   60,   // exclude helicopters hovering, ground vehicles
+		IgnoreDescending: true, // exclude descending arrivals (e.g. 16R approaches over the observer); we show departures + level transit overflights
 	}
 }
 

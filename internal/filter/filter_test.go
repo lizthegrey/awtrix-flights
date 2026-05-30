@@ -87,6 +87,14 @@ func TestEvaluate_Rejections(t *testing.T) {
 			},
 			wantReason: "too lateral",
 		},
+		{
+			name: "descending_arrival_over_observer",
+			mut: func(s *State) {
+				// On-track and low, but descending → an arrival, not a departure.
+				s.VertRateFpm = -800
+			},
+			wantReason: "descending",
+		},
 	}
 	cfg := Default(testObserver)
 	for _, tc := range tests {
@@ -101,6 +109,17 @@ func TestEvaluate_Rejections(t *testing.T) {
 				t.Errorf("reason = %q, want %q (match=%+v)", m.Reason, tc.wantReason, m)
 			}
 		})
+	}
+}
+
+// Level flight (0 fpm) on track and low must still match: it's a departure on
+// a SID level-off or genuine low transit, both of which are perceptibly
+// overhead. Only descending (arrival) traffic is excluded.
+func TestEvaluate_LevelOverflightMatches(t *testing.T) {
+	s := climbingHeavy()
+	s.VertRateFpm = 0
+	if m := Default(testObserver).Evaluate(s); !m.OK {
+		t.Fatalf("want level overflight to match, got %+v", m)
 	}
 }
 

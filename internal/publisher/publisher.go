@@ -49,18 +49,6 @@ func routeCallsign(callsign string) string {
 	return callsign
 }
 
-// Departure climb-out override thresholds. When adsbdb mislabels a flight's
-// origin (it keys routes on the callsign's primary leg, so multi-leg flights
-// reusing one callsign look like arrivals), an aircraft that is low, climbing
-// hard, and close to YSSY — having already matched the overhead geometry — is
-// treated as a Sydney departure regardless of the reported origin. This also
-// catches go-arounds, which adsbdb labels as arrivals.
-const (
-	departureMinClimbFpm = 500   // clearly climbing, not level or descending
-	departureMaxAltFt    = 10000 // still in initial climb-out, not transiting over
-	departureNearYSSYNm  = 8     // physically in the airport's departure/go-around area
-)
-
 // AircraftSource returns current ADS-B state vectors near a point.
 type AircraftSource interface {
 	Search(ctx context.Context, center geo.Point, distNM int) ([]filter.State, error)
@@ -162,42 +150,33 @@ func (p *Publisher) Tick(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		route, err := p.resolveRoute(ctx, v.Callsign)
-		if err != nil {
-			// We require route data to confirm this is a YSSY departure.
-			// Without it: meandering GA traffic (e.g. RSCU209 from Bankstown)
-			// and tail registrations get falsely classified as overhead.
-			log.Info("suppressing: route unknown",
-				"callsign", v.Callsign, "err", err)
+		// Firing authority is the overhead geometry (matched above) plus a
+		// "real flight" gate: the contact must carry an airline-style callsign.
+		// We no longer require the route to start/end at SYD — any airliner that
+		// flies the overhead corridor is shown, departure or transit. This drops
+		// the old origin gate and the climb-out override entirely; the geometry
+		// is the right level of abstraction (see filter-criterion notes).
+		//
+		// The callsign gate is what suppresses meandering GA (whose constant-
+		// heading projection can false-positive the geometry) and tail
+		// registrations — they have no airline callsign. Descending arrivals
+		// maneuvering over the observer (e.g. JQ224 onto 16R) are excluded
+		// upstream by the filter's IgnoreDescending check.
+		if !airlineCallsign.MatchString(v.Callsign) {
+			log.Info("suppressing: not an airline callsign", "callsign", v.Callsign)
 			res.Suppressed = append(res.Suppressed, key)
 			continue
 		}
 
-		// Only fire on aircraft leaving Sydney. The usual signal is adsbdb
-		// reporting origin = SYD/YSSY. But adsbdb keys routes on a callsign's
-		// primary leg, so tag/continuation flights that reuse one callsign are
-		// mislabeled: e.g. UAE3HJ (a SYD-CHC continuation) resolves to its
-		// inbound DXB-SYD leg, origin DXB. For those, trust the energy state
-		// instead — an aircraft low and climbing hard right next to YSSY that
-		// already matched the overhead geometry is taking off, regardless of
-		// what adsbdb calls the origin. This also catches go-arounds (e.g. a
-		// QF412 missed approach overhead): adsbdb labels them arrivals, but
-		// they climb out over the observer just like a departure.
-		//
-		// Descending arrivals maneuvering toward the localizer (observed false
-		// positive: JQ224 intercepting 16R) fail the climb check, and distant
-		// transit traffic fails the proximity check.
-		fromSYD := route.OriginIATA == "SYD" || route.OriginICAO == "YSSY"
-		climbingOutOfYSSY := v.VertRateFpm >= departureMinClimbFpm &&
-			v.AltitudeFt <= departureMaxAltFt &&
-			geo.DistanceNM(v.Position, geo.YSSY34L) <= departureNearYSSYNm
-		if !fromSYD && !climbingOutOfYSSY {
-			log.Info("suppressing: not a SYD departure",
-				"callsign", v.Callsign,
-				"origin", route.OriginIATA, "dest", route.DestIATA,
-				"vert_rate_fpm", v.VertRateFpm, "alt_ft", v.AltitudeFt)
-			res.Suppressed = append(res.Suppressed, key)
-			continue
+		// Route lookup is best-effort enrichment for the display (destination).
+		// adsbdb's community route table has gaps (e.g. CXA802 SYD-XMN) and keys
+		// routes on a callsign's primary leg, so a miss or a wrong origin no
+		// longer blocks firing — we just publish without a destination.
+		route, err := p.resolveRoute(ctx, v.Callsign)
+		if err != nil {
+			log.Info("route unknown; publishing without destination",
+				"callsign", v.Callsign, "err", err)
+			route = adsbdb.Route{}
 		}
 
 		payload := awtrix.Format(v, route, p.Cfg.IconID)
@@ -229,15 +208,14 @@ func (p *Publisher) Tick(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
-// resolveRoute checks the cache first, falling back to live lookup. Skips the
-// lookup entirely for tail registrations (GA/private), which adsbdb won't have
-// route info for. Caches successful lookups; does not cache misses.
+// resolveRoute checks the cache first, falling back to live lookup. The caller
+// gates on airlineCallsign before calling, so this assumes an airline callsign.
+// Caches successful lookups; does not cache misses. Errors (including adsbdb
+// 404s) are surfaced to the caller, which treats them as "no destination" and
+// publishes anyway — route data is display-only, not a firing precondition.
 func (p *Publisher) resolveRoute(ctx context.Context, callsign string) (adsbdb.Route, error) {
 	if callsign == "" {
 		return adsbdb.Route{}, errors.New("empty callsign")
-	}
-	if !airlineCallsign.MatchString(callsign) {
-		return adsbdb.Route{}, fmt.Errorf("non-airline callsign %q", callsign)
 	}
 	// Rewrite operator prefixes that file routes under a different carrier
 	// (e.g. QantasLink QLK→QFA) before the cache key and live lookup, so both
