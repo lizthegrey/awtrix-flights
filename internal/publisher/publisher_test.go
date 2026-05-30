@@ -308,6 +308,34 @@ func TestTick_TailRegistrationSuppressed(t *testing.T) {
 	}
 }
 
+// Non-airline operators (e.g. NSW Police "POL28", a Cessna 208) file airline-
+// format callsigns that clear the airlineCallsign gate, then re-fire endlessly
+// because they orbit. nonAirlineCallsignPrefix must suppress them by operator
+// prefix, before any adsbdb route lookup.
+func TestTick_NonAirlineOperatorSuppressed(t *testing.T) {
+	ctx := context.Background()
+	s := matching()
+	s.Callsign = "POL28" // NSW Police PolAir, airline-format but not an airline
+	src := &fakeSource{vectors: []filter.State{s}}
+	routes := &fakeRoutes{routes: map[string]adsbdb.Route{}}
+	p := newPublisher(src, routes, newCache(), newDedupe(), &fakeMQTT{})
+	mqtt := p.MQTT.(*fakeMQTT)
+
+	res, err := p.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if routes.calls != 0 {
+		t.Errorf("expected zero adsbdb calls for non-airline operator, got %d", routes.calls)
+	}
+	if len(mqtt.pubs) != 0 {
+		t.Errorf("expected no publish for non-airline operator, got %d", len(mqtt.pubs))
+	}
+	if len(res.Suppressed) != 1 {
+		t.Errorf("expected suppression, got %+v", res.Suppressed)
+	}
+}
+
 // airlineCallsign must accept ICAO alphanumeric ATC suffixes (1-2 trailing
 // letters, e.g. Emirates "UAE3HJ") while still rejecting tail registrations.
 // UAE3HJ regressed in the field: the old `[A-Z]?` allowed only one trailing

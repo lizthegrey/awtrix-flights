@@ -24,6 +24,21 @@ import (
 // adsbdb route lookup.
 var airlineCallsign = regexp.MustCompile(`^[A-Z]{3}\d{1,4}[A-Z]{0,2}$`)
 
+// nonAirlineCallsignPrefix lists 3-letter operator prefixes that pass
+// airlineCallsign's airline shape (prefix + digits) but belong to non-commercial
+// operators we never want to fire on: police, medical, survey, and similar
+// government/utility flights. These loiter and orbit the area, so the constant-
+// heading CPA projection false-positives every time the circle re-crosses the
+// overhead window — the same failure mode as meandering GA, but with an airline-
+// format callsign the airlineCallsign gate can't catch. Dedupe doesn't help
+// either: an orbit outlasts the 10-min dedupe TTL, so it re-fires once the TTL
+// lapses. They're also typically filtered off consumer trackers (FR24/FlightAware
+// LADD/PIA), so they appear on our unfiltered ADS-B feed but "show nothing" there.
+// Curated, not inferred — add a prefix only after confirming the operator.
+var nonAirlineCallsignPrefix = map[string]bool{
+	"POL": true, // NSW Police "PolAir" surveillance (orbiting Cessna 208 etc.)
+}
+
 // routeCallsignAlias maps an operator's on-the-wire ICAO designator to the
 // carrier its routes are actually FILED under in adsbdb's route table. adsbdb
 // does a literal callsign-string lookup with no operator/alias translation, so
@@ -177,6 +192,16 @@ func (p *Publisher) Tick(ctx context.Context) (Result, error) {
 		// upstream by the filter's IgnoreDescending check.
 		if !airlineCallsign.MatchString(v.Callsign) {
 			log.Info("suppressing: not an airline callsign", "callsign", v.Callsign)
+			res.Suppressed = append(res.Suppressed, key)
+			continue
+		}
+
+		// Some non-airline operators (police, medical, survey) file airline-format
+		// callsigns that clear airlineCallsign above. They loiter/orbit, so the
+		// constant-heading projection keeps re-firing them. Drop by operator
+		// prefix (see nonAirlineCallsignPrefix).
+		if nonAirlineCallsignPrefix[v.Callsign[:3]] {
+			log.Info("suppressing: non-airline operator", "callsign", v.Callsign)
 			res.Suppressed = append(res.Suppressed, key)
 			continue
 		}
