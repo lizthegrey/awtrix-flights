@@ -134,7 +134,7 @@ var icaoToIATA = map[string]string{
 	"JST": "JQ", // Jetstar
 	"VOZ": "VA", // Virgin Australia
 	"VBB": "BL", // Bonza
-	"REX": "ZL", // Regional Express
+	"RXA": "ZL", // Regional Express (ICAO RXA; radio callsign is "REX")
 	"ANZ": "NZ", // Air New Zealand
 	"KAL": "KE", // Korean Air
 	"UAE": "EK", // Emirates
@@ -160,6 +160,19 @@ var icaoToIATA = map[string]string{
 	"AIC": "AI", // Air India
 	"FJI": "FJ", // Fiji Airways
 	"ACI": "QN", // Air Calin / Aircalin (callsign AIRCALIN)
+	// Added from observed SYD traffic (24h sample, May 2026):
+	"CXA": "MF", // Xiamen Air
+	"AAR": "OZ", // Asiana
+	"DKH": "HO", // Juneyao Airlines
+	"ANG": "PX", // Air Niugini
+	"CEB": "5J", // Cebu Pacific
+	"GIA": "GA", // Garuda Indonesia
+	"HVN": "VN", // Vietnam Airlines
+	"LAN": "LA", // LATAM
+	"MXD": "OD", // Batik Air Malaysia
+	"TWB": "TW", // T'way Air
+	"VJC": "VJ", // VietJet Air
+	"XAX": "D7", // AirAsia X
 }
 
 // String returns a one-line description, useful for logs.

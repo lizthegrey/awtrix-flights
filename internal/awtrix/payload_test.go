@@ -9,6 +9,27 @@ import (
 	"github.com/lizthegrey/awtrix-flights/internal/filter"
 )
 
+func TestNiceFlight(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"QFA75", "QF75"},     // mainline shortened
+		{"QLK1944", "QF1944"}, // QantasLink wire callsign shortened to QF
+		{"RXA123", "ZL123"},   // Rex: ICAO designator RXA (not radio "REX")
+		{"REX123", "REX123"},  // radio callsign isn't an ADS-B designator; passes through
+		{"CXA801", "MF801"},   // Xiamen, newly mapped
+		{"XAX201", "D7201"},   // AirAsia X, IATA code with leading letter+digit
+		{"CEB39", "5J39"},     // Cebu Pacific, numeric-leading IATA code
+		{"POL28", "POL28"},    // PolAir: unmapped, renders raw (and never fires anyway)
+		{"ZUD", "ZUD"},        // tail registration, no digits
+	}
+	for _, c := range cases {
+		if got := niceFlight(c.in); got != c.want {
+			t.Errorf("niceFlight(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestFormat(t *testing.T) {
 	tests := []struct {
 		name  string
