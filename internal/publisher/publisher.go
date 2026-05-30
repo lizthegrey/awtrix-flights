@@ -39,10 +39,23 @@ var routeCallsignAlias = map[string]string{
 	"QLK": "QFA", // QantasLink → Qantas mainline route filing
 }
 
-// routeCallsign returns the callsign to query adsbdb with, rewriting the
-// 3-letter operator prefix per routeCallsignAlias. Input must already match
-// airlineCallsign (3 letters + digits + optional suffix).
+// qantasLinkSuffixForm matches QantasLink's trailing-letter callsign form
+// "QLK###L" (exactly 3 digits + one letter, e.g. "QLK205D"). Qantas group files
+// these under mainline "QFA2###" — the leading "2" is a QantasLink number block
+// and the trailing letter is dropped — so QLK205D's route lives at QFA2205, NOT
+// the QFA205D the plain prefix swap would produce (both 404). This is distinct
+// from the 4-digit QLK#### form (e.g. QLK1944 → QFA1944), which keeps its number
+// and is handled by the generic routeCallsignAlias prefix swap.
+var qantasLinkSuffixForm = regexp.MustCompile(`^QLK(\d{3})[A-Z]$`)
+
+// routeCallsign returns the callsign to query adsbdb with. QantasLink's
+// trailing-letter form needs a digit remap (see qantasLinkSuffixForm); every
+// other aliased operator is a plain 3-letter prefix swap per routeCallsignAlias.
+// Input must already match airlineCallsign (3 letters + digits + optional suffix).
 func routeCallsign(callsign string) string {
+	if m := qantasLinkSuffixForm.FindStringSubmatch(callsign); m != nil {
+		return "QFA2" + m[1]
+	}
 	if alias, ok := routeCallsignAlias[callsign[:3]]; ok {
 		return alias + callsign[3:]
 	}

@@ -105,6 +105,16 @@ the wire callsign and shortens it via `icaoToIATA` (`QLK`→`QF`). This
 is NOT the same as UAE3HJ (same callsign, wrong leg) — it's a different
 callsign string entirely. Add new entries to `routeCallsignAlias` for
 other subsidiaries that file under a parent (don't try to infer it).
+
+QantasLink also has a **second, trailing-letter callsign form** that the
+plain prefix swap can't handle: `QLK###L` (exactly 3 digits + one letter,
+e.g. `QLK205D`) is filed under `QFA2###` — a leading `2` block, suffix
+dropped — so `QLK205D`'s route lives at `QFA2205`, not the `QFA205D` the
+prefix swap would produce (both 404). `qantasLinkSuffixForm` in
+`internal/publisher` does this `QLKNNND → QFA2NNN` remap ahead of the
+generic alias; the 4-digit `QLK####` form is untouched and still goes
+through `routeCallsignAlias`. Verify any new form against the live API
+before encoding it — don't generalize the digit count from one example.
 - **Meandering GA traffic** from nearby small-airport feeders match
   the geometry (the constant-heading projection false-positives while
   they turn) but aren't real overflight events. Suppressed by the
