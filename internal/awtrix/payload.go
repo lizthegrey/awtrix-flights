@@ -36,7 +36,16 @@ type Payload struct {
 // Display format: "<flight> → <dest> <type>", e.g. "QF75 → YVR 789".
 // Falls back gracefully when callsign/route/type info is missing.
 func Format(state filter.State, route adsbdb.Route, iconID string) Payload {
-	flight := niceFlight(state.Callsign)
+	// Prefer adsbdb's IATA callsign: when we remapped the wire callsign to find
+	// the route (e.g. QantasLink QLK205D → QFA2205), its callsign_iata is the
+	// real marketing number (QF2205), whereas mechanically shortening the wire
+	// callsign yields the meaningless QF205D. For non-remapped flights the two
+	// agree, so this is a no-op. Falls back to the wire shorten when the route
+	// lookup 404'd (best-effort) and left CallsignIATA empty.
+	flight := route.CallsignIATA
+	if flight == "" {
+		flight = niceFlight(state.Callsign)
+	}
 	dest := bestDest(route)
 	typeShort := shortType(state.ICAOType)
 

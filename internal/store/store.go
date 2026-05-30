@@ -42,13 +42,14 @@ func New(db DDB, tableName string) *Store {
 }
 
 type item struct {
-	PK         string `dynamodbav:"pk"`
-	ExpiresAt  int64  `dynamodbav:"expires_at"` // unix seconds, used by DDB TTL
-	OriginICAO string `dynamodbav:"origin_icao,omitempty"`
-	DestICAO   string `dynamodbav:"dest_icao,omitempty"`
-	OriginIATA string `dynamodbav:"origin_iata,omitempty"`
-	DestIATA   string `dynamodbav:"dest_iata,omitempty"`
-	Callsign   string `dynamodbav:"callsign,omitempty"`
+	PK           string `dynamodbav:"pk"`
+	ExpiresAt    int64  `dynamodbav:"expires_at"` // unix seconds, used by DDB TTL
+	OriginICAO   string `dynamodbav:"origin_icao,omitempty"`
+	DestICAO     string `dynamodbav:"dest_icao,omitempty"`
+	OriginIATA   string `dynamodbav:"origin_iata,omitempty"`
+	DestIATA     string `dynamodbav:"dest_iata,omitempty"`
+	Callsign     string `dynamodbav:"callsign,omitempty"`
+	CallsignIATA string `dynamodbav:"callsign_iata,omitempty"`
 }
 
 // MarkFired records that we just notified for callsign; returns the previous
@@ -115,11 +116,12 @@ func (s *Store) GetRoute(ctx context.Context, callsign string) (adsbdb.Route, er
 		return adsbdb.Route{}, ErrMiss
 	}
 	return adsbdb.Route{
-		Callsign:   it.Callsign,
-		OriginICAO: it.OriginICAO,
-		DestICAO:   it.DestICAO,
-		OriginIATA: it.OriginIATA,
-		DestIATA:   it.DestIATA,
+		Callsign:     it.Callsign,
+		CallsignIATA: it.CallsignIATA,
+		OriginICAO:   it.OriginICAO,
+		DestICAO:     it.DestICAO,
+		OriginIATA:   it.OriginIATA,
+		DestIATA:     it.DestIATA,
 	}, nil
 }
 
@@ -127,13 +129,14 @@ func (s *Store) GetRoute(ctx context.Context, callsign string) (adsbdb.Route, er
 func (s *Store) PutRoute(ctx context.Context, callsign string, r adsbdb.Route, ttl time.Duration) error {
 	pk := "route:" + callsign
 	it := item{
-		PK:         pk,
-		ExpiresAt:  time.Now().Add(ttl).Unix(),
-		Callsign:   r.Callsign,
-		OriginICAO: r.OriginICAO,
-		DestICAO:   r.DestICAO,
-		OriginIATA: r.OriginIATA,
-		DestIATA:   r.DestIATA,
+		PK:           pk,
+		ExpiresAt:    time.Now().Add(ttl).Unix(),
+		Callsign:     r.Callsign,
+		CallsignIATA: r.CallsignIATA,
+		OriginICAO:   r.OriginICAO,
+		DestICAO:     r.DestICAO,
+		OriginIATA:   r.OriginIATA,
+		DestIATA:     r.DestIATA,
 	}
 	av, err := attributevalue.MarshalMap(it)
 	if err != nil {

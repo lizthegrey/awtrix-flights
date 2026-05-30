@@ -81,7 +81,7 @@ func TestRouteCache(t *testing.T) {
 	if _, err := s.GetRoute(ctx, "QFA75"); !errors.Is(err, ErrMiss) {
 		t.Errorf("expected ErrMiss, got %v", err)
 	}
-	r := adsbdb.Route{Callsign: "QFA75", OriginICAO: "YSSY", DestICAO: "CYVR", OriginIATA: "SYD", DestIATA: "YVR"}
+	r := adsbdb.Route{Callsign: "QFA75", CallsignIATA: "QF75", OriginICAO: "YSSY", DestICAO: "CYVR", OriginIATA: "SYD", DestIATA: "YVR"}
 	if err := s.PutRoute(ctx, "QFA75", r, 24*time.Hour); err != nil {
 		t.Fatalf("PutRoute: %v", err)
 	}

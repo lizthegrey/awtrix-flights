@@ -88,9 +88,15 @@ Also note **two callsign-format gotchas** in `internal/publisher`
 suffix (`UAE3HJ`), so the regex allows `[A-Z]{0,2}` after the digits,
 not `[A-Z]?`. And the display's ICAO→IATA prefix map must list any
 operator you want shortened (`KAL`→`KE`, etc.) or it renders the raw
-ICAO prefix. adsbdb's `callsign_iata` is just a mechanical prefix swap
-(`UAE3HJ`→`EK3HJ`), NOT the marketing flight number (`EK412`), so we
-can't show the commercial number from adsbdb alone.
+ICAO prefix. The display prefers the route's `callsign_iata` (parsed into
+`adsbdb.Route.CallsignIATA`) for the flight number, falling back to
+`niceFlight(wire callsign)` only when the route 404'd. For most flights
+adsbdb's `callsign_iata` is just a mechanical prefix swap equal to the
+wire shorten (`UAE3HJ`→`EK3HJ`, still NOT the marketing number `EK412`),
+so preferring it is usually a no-op — and for UAE3HJ we still can't show
+the commercial number. It only changes the display where we *remapped*
+the wire callsign to find the route (see the QantasLink suffix-form note
+below): there `callsign_iata` is the real marketing number.
 
 A related-but-distinct adsbdb miss: **operator codes that file routes
 under a different carrier.** adsbdb does a literal callsign-string
@@ -115,6 +121,11 @@ prefix swap would produce (both 404). `qantasLinkSuffixForm` in
 generic alias; the 4-digit `QLK####` form is untouched and still goes
 through `routeCallsignAlias`. Verify any new form against the live API
 before encoding it — don't generalize the digit count from one example.
+Because we remapped to the real filing, `QFA2205`'s `callsign_iata`
+(`QF2205`) is the genuine marketing number, so the display shows `QF2205`
+rather than the meaningless wire shorten `QF205D` (see the callsign_iata
+note above). This is the one place the route lookup feeds the flight
+number, not just origin/dest.
 - **Meandering GA traffic** from nearby small-airport feeders match
   the geometry (the constant-heading projection false-positives while
   they turn) but aren't real overflight events. Suppressed by the

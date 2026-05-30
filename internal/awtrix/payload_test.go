@@ -56,6 +56,14 @@ func TestFormat(t *testing.T) {
 			want:  "KE402 ICN B77W",
 		},
 		{
+			// Wire callsign QLK205D would mechanically shorten to "QF205D"; the
+			// remapped route's callsign_iata gives the real marketing number.
+			name:  "qantaslink_suffix_form_shows_marketing_number",
+			state: filter.State{Callsign: "QLK205D", ICAOType: "DH8D"},
+			route: adsbdb.Route{CallsignIATA: "QF2205", DestIATA: "ABX", DestICAO: "YMAY"},
+			want:  "QF2205 ABX DH8D",
+		},
+		{
 			name:  "unknown_callsign_prefix_passes_through",
 			state: filter.State{Callsign: "XYZ99", ICAOType: "B738"},
 			route: adsbdb.Route{DestIATA: "MEL"},

@@ -24,11 +24,12 @@ var ErrNotFound = errors.New("adsbdb: callsign not found")
 
 // Route is the minimal route info we extract.
 type Route struct {
-	Callsign   string
-	OriginICAO string
-	DestICAO   string
-	OriginIATA string
-	DestIATA   string
+	Callsign     string
+	CallsignIATA string // adsbdb's IATA-form callsign, e.g. "QF2205" for QFA2205
+	OriginICAO   string
+	DestICAO     string
+	OriginIATA   string
+	DestIATA     string
 }
 
 // Client queries adsbdb.com.
@@ -53,9 +54,10 @@ func New() *Client {
 type rawResp struct {
 	Response struct {
 		FlightRoute struct {
-			Callsign    string  `json:"callsign"`
-			Origin      airport `json:"origin"`
-			Destination airport `json:"destination"`
+			Callsign     string  `json:"callsign"`
+			CallsignIATA string  `json:"callsign_iata"`
+			Origin       airport `json:"origin"`
+			Destination  airport `json:"destination"`
 		} `json:"flightroute"`
 	} `json:"response"`
 }
@@ -103,10 +105,11 @@ func (c *Client) Lookup(ctx context.Context, callsign string) (Route, error) {
 		return Route{}, ErrNotFound
 	}
 	return Route{
-		Callsign:   fr.Callsign,
-		OriginICAO: fr.Origin.ICAOCode,
-		DestICAO:   fr.Destination.ICAOCode,
-		OriginIATA: fr.Origin.IATACode,
-		DestIATA:   fr.Destination.IATACode,
+		Callsign:     fr.Callsign,
+		CallsignIATA: fr.CallsignIATA,
+		OriginICAO:   fr.Origin.ICAOCode,
+		DestICAO:     fr.Destination.ICAOCode,
+		OriginIATA:   fr.Origin.IATACode,
+		DestIATA:     fr.Destination.IATACode,
 	}, nil
 }

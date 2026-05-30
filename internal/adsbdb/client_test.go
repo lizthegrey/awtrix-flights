@@ -15,7 +15,7 @@ const qfa75Fixture = `{
     "flightroute": {
       "callsign": "QFA75",
       "callsign_icao": "QFA",
-      "callsign_iata": "QF",
+      "callsign_iata": "QF75",
       "airline": {"name": "Qantas"},
       "origin": {
         "iata_code": "SYD",
@@ -48,11 +48,12 @@ func TestLookupOK(t *testing.T) {
 		t.Fatalf("Lookup: %v", err)
 	}
 	want := Route{
-		Callsign:   "QFA75",
-		OriginICAO: "YSSY",
-		DestICAO:   "CYVR",
-		OriginIATA: "SYD",
-		DestIATA:   "YVR",
+		Callsign:     "QFA75",
+		CallsignIATA: "QF75",
+		OriginICAO:   "YSSY",
+		DestICAO:     "CYVR",
+		OriginIATA:   "SYD",
+		DestIATA:     "YVR",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Lookup mismatch (-want +got):\n%s", diff)
