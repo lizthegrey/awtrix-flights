@@ -77,25 +77,34 @@ var routeCallsignAlias = map[string]string{
 // right one — so guessing is worse than useless, it's confidently wrong.
 //
 // There is no way to recover the dropped digit(s) from the wire callsign
-// alone, so we deliberately do NOT remap this form at all: the callsign is
-// queried as-is ("QLK...", a prefix adsbdb has zero entries under) so the
-// lookup 404s cleanly and the display falls back to "no destination" rather
-// than risking a plausible-looking wrong one. This is distinct from the
-// 4-digit QLK#### form (e.g. QLK1944 → QFA1944, no digits dropped, no
-// guessing involved) and the 4-digit-plus-suffix form (e.g. QLK1234A →
-// QFA1234A), both handled safely by the generic routeCallsignAlias prefix
-// swap below.
-var qantasLinkSuffixForm = regexp.MustCompile(`^QLK\d{1,3}[A-Z]$`)
+// alone, and the two blocks confirmed to be real QantasLink number ranges
+// (see qantasLinkSuffixBlocks) both often have some flight filed under the
+// same 1-3 digit remainder — so we can't just always guess one block either.
+// Instead resolveQantasLinkSuffixRoute queries BOTH candidate blocks and
+// only trusts the result if EXACTLY ONE resolves: two hits means we can't
+// tell which is real (ambiguous, e.g. the "205" remainder: QFA1205 is a real
+// CBR-MEL flight AND QFA2205 is a real SYD-ABX flight — picking either would
+// sometimes be confidently wrong), so we fall back to "no destination"
+// rather than guess. This is distinct from the 4-digit QLK#### form (e.g.
+// QLK1944 → QFA1944, no digits dropped, no guessing involved) and the
+// 4-digit-plus-suffix form (e.g. QLK1234A → QFA1234A), both handled safely
+// by the generic routeCallsignAlias prefix swap below.
+var qantasLinkSuffixForm = regexp.MustCompile(`^QLK(\d{1,3})[A-Z]$`)
 
-// routeCallsign returns the callsign to query adsbdb with. QantasLink's
-// truncated trailing-letter form is deliberately left unmapped (see
-// qantasLinkSuffixForm); every other aliased operator is a plain 3-letter
-// prefix swap per routeCallsignAlias. Input must already match
-// airlineCallsign (3 letters + digits + optional suffix).
+// qantasLinkSuffixBlocks lists the QantasLink number blocks worth guessing
+// for the truncated trailing-letter form. Only "1" and "2" have a real
+// confirmed-QantasLink example behind them (QF1431 SYD-CBR; QF2028 SYD-DBO).
+// Block "3" was checked and found to be US codeshare traffic (e.g. QF3028
+// MSP-DFW) — genuinely a different, unrelated part of Qantas's number space,
+// not QantasLink — so it's deliberately excluded rather than added; don't
+// extend this list without an equally concrete positive example.
+var qantasLinkSuffixBlocks = []string{"2", "1"}
+
+// routeCallsign returns the callsign to query adsbdb with for operators
+// aliased in routeCallsignAlias. QantasLink's truncated trailing-letter form
+// is handled separately by resolveQantasLinkSuffixRoute, not here. Input
+// must already match airlineCallsign (3 letters + digits + optional suffix).
 func routeCallsign(callsign string) string {
-	if qantasLinkSuffixForm.MatchString(callsign) {
-		return callsign
-	}
 	if alias, ok := routeCallsignAlias[callsign[:3]]; ok {
 		return alias + callsign[3:]
 	}
@@ -280,6 +289,11 @@ func (p *Publisher) resolveRoute(ctx context.Context, callsign string) (adsbdb.R
 	if callsign == "" {
 		return adsbdb.Route{}, errors.New("empty callsign")
 	}
+	// QantasLink's truncated trailing-letter form needs multi-candidate
+	// disambiguation (see qantasLinkSuffixForm), not a plain prefix rewrite.
+	if qantasLinkSuffixForm.MatchString(callsign) {
+		return p.resolveQantasLinkSuffixRoute(ctx, callsign)
+	}
 	// Rewrite operator prefixes that file routes under a different carrier
 	// (e.g. QantasLink QLK→QFA) before the cache key and live lookup, so both
 	// the squawked and filed forms resolve to the same route entry.
@@ -295,6 +309,37 @@ func (p *Publisher) resolveRoute(ctx context.Context, callsign string) (adsbdb.R
 		p.logger().Warn("route cache put failed", "err", err)
 	}
 	return r, nil
+}
+
+// resolveQantasLinkSuffixRoute tries both candidate number blocks for a
+// truncated QantasLink callsign (see qantasLinkSuffixForm/qantasLinkSuffixBlocks)
+// and only trusts the result if exactly one block resolves to a route —
+// two hits means the true block is ambiguous, so it returns ErrNotFound
+// rather than guess. Cached (and cache-checked) under the original wire
+// callsign, since the resolved candidate varies per lookup.
+func (p *Publisher) resolveQantasLinkSuffixRoute(ctx context.Context, callsign string) (adsbdb.Route, error) {
+	if r, err := p.Cache.GetRoute(ctx, callsign); err == nil {
+		return r, nil
+	}
+	m := qantasLinkSuffixForm.FindStringSubmatch(callsign)
+	padded := fmt.Sprintf("%03s", m[1])
+
+	var found adsbdb.Route
+	hits := 0
+	for _, block := range qantasLinkSuffixBlocks {
+		r, err := p.Routes.Lookup(ctx, "QFA"+block+padded)
+		if err != nil {
+			continue
+		}
+		found, hits = r, hits+1
+	}
+	if hits != 1 {
+		return adsbdb.Route{}, adsbdb.ErrNotFound
+	}
+	if err := p.Cache.PutRoute(ctx, callsign, found, p.Cfg.RouteCacheTTL); err != nil {
+		p.logger().Warn("route cache put failed", "err", err)
+	}
+	return found, nil
 }
 
 func dedupeKey(s filter.State) string {

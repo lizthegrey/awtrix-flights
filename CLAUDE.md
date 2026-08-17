@@ -95,11 +95,10 @@ adsbdb's `callsign_iata` is just a mechanical prefix swap equal to the
 wire shorten (`UAE3HJ`→`EK3HJ`, still NOT the marketing number `EK412`),
 so preferring it is usually a no-op — and for UAE3HJ we still can't show
 the commercial number. The one case where a remap *would* change the
-digits shown (QantasLink's truncated trailing-letter form) is deliberately
-left unmapped — see the QantasLink suffix-form note below — so in practice
-there is currently no case where preferring `callsign_iata` changes the
-displayed flight number vs. the wire shorten; the field is kept because a
-future aliased operator could reintroduce one.
+digits shown (QantasLink's truncated trailing-letter form) only resolves
+when disambiguation succeeds — see the QantasLink suffix-form note below —
+so `callsign_iata` changes the displayed number only on that occasional hit;
+otherwise it's a no-op like everything else here.
 
 A related-but-distinct adsbdb miss: **operator codes that file routes
 under a different carrier.** adsbdb does a literal callsign-string
@@ -117,32 +116,41 @@ other subsidiaries that file under a parent (don't try to infer it).
 
 QantasLink also has a **second, trailing-letter callsign form** —
 `QLK#L` / `QLK##L` / `QLK###L` (1-3 digits + one letter, e.g. `QLK431D`
-or `QLK28D`) — that the plain prefix swap can't safely handle, and that
-`qantasLinkSuffixForm` in `internal/publisher` deliberately leaves
-**unmapped**. This form is a truncated flight number: the transponder
-drops the leading digit(s) of the real 4-digit QF number, so `431D` alone
-doesn't tell you whether the real flight is QF1431, QF2431, QF9431, etc.
+or `QLK28D`) — that the plain prefix swap can't safely handle. This form
+is a truncated flight number: the transponder drops the leading digit(s)
+of the real 4-digit QF number, so `431D` alone doesn't tell you whether
+the real flight is QF1431, QF2431, QF9431, etc.
 
-A now-reverted version of this code guessed the dropped digit was always
+An earlier version of this code guessed the dropped digit was always
 `2` (so `QLK205D` → `QFA2205`). That looked safe — it round-tripped one
 real example without 404ing — but "doesn't 404" isn't "is correct": a
 live report of `QLK431D` (a QantasLink DH8D) showing an LHR-adjacent
 destination traced back to this guess resolving to a real but *wholly
 unrelated* Qantas mainline flight. Checking the actual flight (QF1431,
-SYD-CBR, block `1`) and then spot-checking further showed the guess is
-unsound in general: Qantas's flight-number space (mainline + codeshares)
-is dense enough that a 1-3 digit remainder resolves to SOME real flight
-under nearly *every* leading digit tried (`128`→ block `1` is QF128
-HKG-SYD widebody, block `2` is QF2028 SYD-DBO turboprop, block `3` is
-QF3028 a US codeshare MSP-DFW) — so guessing is confidently wrong far
-more often than it's right. There is no way to recover the dropped
-digit(s) from the wire callsign alone, so don't try — this form is
-queried as-is (`QLK...`, a prefix adsbdb has zero entries under) so it
-404s cleanly and the display falls back to no destination. This is
-distinct from the 4-digit `QLK####` form (e.g. `QLK1944` → `QFA1944`,
-no digits dropped, no guessing) and the 4-digit-plus-suffix form (e.g.
-`QLK1234A` → `QFA1234A`), both still handled by the generic
-`routeCallsignAlias` prefix swap.
+SYD-CBR, block `1`) and then spot-checking further showed guessing a
+single fixed block is unsound in general: Qantas's flight-number space
+(mainline + codeshares) is dense enough that a 1-3 digit remainder
+resolves to SOME real flight under nearly *every* leading digit tried
+(`128` → block `1` is QF128 HKG-SYD widebody, block `2` is QF2028
+SYD-DBO turboprop, block `3` is QF3028 a US codeshare MSP-DFW). And two
+blocks can BOTH be real simultaneously for the same remainder — `205` →
+block `1` is a real CBR-MEL flight (`QFA1205`) AND block `2` is a real
+SYD-ABX flight (`QFA2205`) — so even the specific example this code was
+originally built on was never actually verified correct, just "not 404".
+
+`internal/publisher`'s `resolveQantasLinkSuffixRoute` now queries the two
+blocks confirmed to be real QantasLink ranges (`qantasLinkSuffixBlocks`:
+`"2"`, then `"1"` — order doesn't matter, both are always tried) and only
+trusts the result if **exactly one** resolves; two hits (or zero) is
+ambiguous/unknown and falls back to no destination rather than guess.
+Block `3` was checked and found to be unrelated US codeshare traffic, not
+QantasLink — deliberately excluded; don't extend `qantasLinkSuffixBlocks`
+without an equally concrete positive example. This costs up to two live
+adsbdb calls per uncached truncated callsign (cached under the original
+wire callsign once resolved). This is distinct from the 4-digit `QLK####`
+form (e.g. `QLK1944` → `QFA1944`, no digits dropped, no guessing) and the
+4-digit-plus-suffix form (e.g. `QLK1234A` → `QFA1234A`), both still
+handled by the generic `routeCallsignAlias` prefix swap.
 - **Meandering GA traffic** from nearby small-airport feeders match
   the geometry (the constant-heading projection false-positives while
   they turn) but aren't real overflight events. Suppressed by the

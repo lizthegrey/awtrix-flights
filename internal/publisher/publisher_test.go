@@ -165,9 +165,6 @@ func TestRouteCallsign(t *testing.T) {
 	}{
 		{"QLK1944", "QFA1944"},   // QantasLink 4-digit → Qantas mainline filing, no digit dropped
 		{"QLK1234A", "QFA1234A"}, // 4-digit + suffix: plain swap, suffix preserved, no digit dropped
-		{"QLK431D", "QLK431D"},   // 3-digit + letter: truncated number, unmappable, left unmapped
-		{"QLK28D", "QLK28D"},     // 2-digit + letter: truncated number, unmappable, left unmapped
-		{"QLK9D", "QLK9D"},       // 1-digit + letter: truncated number, unmappable, left unmapped
 		{"QLK9999X", "QFA9999X"}, // 4 digits + letter: not the truncated form, plain swap
 		{"QFA75", "QFA75"},       // already mainline, unchanged
 		{"VOZ123", "VOZ123"},     // unrelated operator, unchanged
@@ -177,6 +174,63 @@ func TestRouteCallsign(t *testing.T) {
 		if got := routeCallsign(c.in); got != c.want {
 			t.Errorf("routeCallsign(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// The truncated QantasLink trailing-letter form is handled by
+// resolveQantasLinkSuffixRoute (via resolveRoute), not routeCallsign — it
+// needs both candidate blocks queried to detect ambiguity, which a pure
+// string-rewrite function can't do.
+func TestResolveRoute_QantasLinkSuffixForm(t *testing.T) {
+	cases := []struct {
+		name     string
+		callsign string
+		routes   map[string]adsbdb.Route
+		wantErr  bool
+		wantDest string
+	}{
+		{
+			name:     "single block hit resolves",
+			callsign: "QLK431D",
+			routes: map[string]adsbdb.Route{
+				"QFA1431": {DestIATA: "CBR"}, // QFA2431 deliberately absent: unambiguous
+			},
+			wantDest: "CBR",
+		},
+		{
+			name:     "both blocks hit is ambiguous, not resolved",
+			callsign: "QLK205D",
+			routes: map[string]adsbdb.Route{
+				"QFA1205": {DestIATA: "MEL"}, // real CBR-MEL flight
+				"QFA2205": {DestIATA: "ABX"}, // real SYD-ABX flight — can't tell which is true
+			},
+			wantErr: true,
+		},
+		{
+			name:     "neither block hits, not resolved",
+			callsign: "QLK9D",
+			routes:   map[string]adsbdb.Route{},
+			wantErr:  true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			routes := &fakeRoutes{routes: c.routes}
+			p := &Publisher{Routes: routes, Cache: newCache(), Cfg: Default("test/topic", testObserver)}
+			r, err := p.resolveRoute(context.Background(), c.callsign)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("resolveRoute(%q) = %+v, want error", c.callsign, r)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveRoute(%q): %v", c.callsign, err)
+			}
+			if r.DestIATA != c.wantDest {
+				t.Errorf("resolveRoute(%q).DestIATA = %q, want %q", c.callsign, r.DestIATA, c.wantDest)
+			}
+		})
 	}
 }
 
