@@ -55,13 +55,25 @@ var routeCallsignAlias = map[string]string{
 }
 
 // qantasLinkSuffixForm matches QantasLink's trailing-letter callsign form
-// "QLK###L" (exactly 3 digits + one letter, e.g. "QLK205D"). Qantas group files
-// these under mainline "QFA2###" — the leading "2" is a QantasLink number block
-// and the trailing letter is dropped — so QLK205D's route lives at QFA2205, NOT
-// the QFA205D the plain prefix swap would produce (both 404). This is distinct
-// from the 4-digit QLK#### form (e.g. QLK1944 → QFA1944), which keeps its number
-// and is handled by the generic routeCallsignAlias prefix swap.
-var qantasLinkSuffixForm = regexp.MustCompile(`^QLK(\d{3})[A-Z]$`)
+// "QLK#L" / "QLK##L" / "QLK###L" (1-3 digits + one letter, e.g. "QLK205D" or
+// "QLK28D"). Qantas group files these under mainline "QFA2###" — the digits
+// zero-padded to 3 and prefixed with a leading "2" QantasLink number block,
+// with the trailing letter dropped — so QLK205D's route lives at QFA2205 and
+// QLK28D's lives at QFA2028, NOT the QFA205D / QFA28D a plain prefix swap
+// would produce.
+//
+// The 3-digit case (QLK205D → QFA2205) was verified against the live API when
+// this was first added. QLK28D → QFA2028 (SYD-DBO, a QantasLink Dash-8 route)
+// was verified live too, confirming the same zero-pad-then-prefix rule holds
+// for fewer digits — and confirming the previous exactly-3-digit regex was
+// the bug: QLK28D (2 digits) fell through to the generic plain-swap path
+// below and produced QFA28D, which collided with a real but wholly unrelated
+// Qantas mainline flight (QF28, AKL-SYD widebody) that has nothing to do with
+// the QantasLink turboprop that actually squawked QLK28D. This is distinct
+// from the 4-digit QLK#### form (e.g. QLK1944 → QFA1944), which keeps its
+// number unpadded and is handled by the generic routeCallsignAlias prefix
+// swap below.
+var qantasLinkSuffixForm = regexp.MustCompile(`^QLK(\d{1,3})[A-Z]$`)
 
 // routeCallsign returns the callsign to query adsbdb with. QantasLink's
 // trailing-letter form needs a digit remap (see qantasLinkSuffixForm); every
@@ -69,7 +81,7 @@ var qantasLinkSuffixForm = regexp.MustCompile(`^QLK(\d{3})[A-Z]$`)
 // Input must already match airlineCallsign (3 letters + digits + optional suffix).
 func routeCallsign(callsign string) string {
 	if m := qantasLinkSuffixForm.FindStringSubmatch(callsign); m != nil {
-		return "QFA2" + m[1]
+		return fmt.Sprintf("QFA2%03s", m[1])
 	}
 	if alias, ok := routeCallsignAlias[callsign[:3]]; ok {
 		return alias + callsign[3:]

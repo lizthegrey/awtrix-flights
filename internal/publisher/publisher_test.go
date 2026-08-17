@@ -166,7 +166,9 @@ func TestRouteCallsign(t *testing.T) {
 		{"QLK1944", "QFA1944"},   // QantasLink 4-digit → Qantas mainline filing
 		{"QLK1234A", "QFA1234A"}, // 4-digit + suffix: plain swap, suffix preserved
 		{"QLK205D", "QFA2205"},   // 3-digit + letter: QFA2### block, suffix dropped
-		{"QLK99X", "QFA99X"},     // only 2 digits: not the QLK###L form, plain swap
+		{"QLK28D", "QFA2028"},    // 2-digit + letter: zero-padded into the QFA2### block
+		{"QLK9D", "QFA2009"},     // 1-digit + letter: zero-padded into the QFA2### block
+		{"QLK9999X", "QFA9999X"}, // 4 digits + letter: not the QLK#{1,3}L form, plain swap
 		{"QFA75", "QFA75"},       // already mainline, unchanged
 		{"VOZ123", "VOZ123"},     // unrelated operator, unchanged
 		{"UAE3HJ", "UAE3HJ"},     // alphanumeric-suffix callsign, unchanged
