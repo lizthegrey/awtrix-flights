@@ -94,9 +94,12 @@ ICAO prefix. The display prefers the route's `callsign_iata` (parsed into
 adsbdb's `callsign_iata` is just a mechanical prefix swap equal to the
 wire shorten (`UAE3HJ`→`EK3HJ`, still NOT the marketing number `EK412`),
 so preferring it is usually a no-op — and for UAE3HJ we still can't show
-the commercial number. It only changes the display where we *remapped*
-the wire callsign to find the route (see the QantasLink suffix-form note
-below): there `callsign_iata` is the real marketing number.
+the commercial number. The one case where a remap *would* change the
+digits shown (QantasLink's truncated trailing-letter form) is deliberately
+left unmapped — see the QantasLink suffix-form note below — so in practice
+there is currently no case where preferring `callsign_iata` changes the
+displayed flight number vs. the wire shorten; the field is kept because a
+future aliased operator could reintroduce one.
 
 A related-but-distinct adsbdb miss: **operator codes that file routes
 under a different carrier.** adsbdb does a literal callsign-string
@@ -112,20 +115,34 @@ is NOT the same as UAE3HJ (same callsign, wrong leg) — it's a different
 callsign string entirely. Add new entries to `routeCallsignAlias` for
 other subsidiaries that file under a parent (don't try to infer it).
 
-QantasLink also has a **second, trailing-letter callsign form** that the
-plain prefix swap can't handle: `QLK###L` (exactly 3 digits + one letter,
-e.g. `QLK205D`) is filed under `QFA2###` — a leading `2` block, suffix
-dropped — so `QLK205D`'s route lives at `QFA2205`, not the `QFA205D` the
-prefix swap would produce (both 404). `qantasLinkSuffixForm` in
-`internal/publisher` does this `QLKNNND → QFA2NNN` remap ahead of the
-generic alias; the 4-digit `QLK####` form is untouched and still goes
-through `routeCallsignAlias`. Verify any new form against the live API
-before encoding it — don't generalize the digit count from one example.
-Because we remapped to the real filing, `QFA2205`'s `callsign_iata`
-(`QF2205`) is the genuine marketing number, so the display shows `QF2205`
-rather than the meaningless wire shorten `QF205D` (see the callsign_iata
-note above). This is the one place the route lookup feeds the flight
-number, not just origin/dest.
+QantasLink also has a **second, trailing-letter callsign form** —
+`QLK#L` / `QLK##L` / `QLK###L` (1-3 digits + one letter, e.g. `QLK431D`
+or `QLK28D`) — that the plain prefix swap can't safely handle, and that
+`qantasLinkSuffixForm` in `internal/publisher` deliberately leaves
+**unmapped**. This form is a truncated flight number: the transponder
+drops the leading digit(s) of the real 4-digit QF number, so `431D` alone
+doesn't tell you whether the real flight is QF1431, QF2431, QF9431, etc.
+
+A now-reverted version of this code guessed the dropped digit was always
+`2` (so `QLK205D` → `QFA2205`). That looked safe — it round-tripped one
+real example without 404ing — but "doesn't 404" isn't "is correct": a
+live report of `QLK431D` (a QantasLink DH8D) showing an LHR-adjacent
+destination traced back to this guess resolving to a real but *wholly
+unrelated* Qantas mainline flight. Checking the actual flight (QF1431,
+SYD-CBR, block `1`) and then spot-checking further showed the guess is
+unsound in general: Qantas's flight-number space (mainline + codeshares)
+is dense enough that a 1-3 digit remainder resolves to SOME real flight
+under nearly *every* leading digit tried (`128`→ block `1` is QF128
+HKG-SYD widebody, block `2` is QF2028 SYD-DBO turboprop, block `3` is
+QF3028 a US codeshare MSP-DFW) — so guessing is confidently wrong far
+more often than it's right. There is no way to recover the dropped
+digit(s) from the wire callsign alone, so don't try — this form is
+queried as-is (`QLK...`, a prefix adsbdb has zero entries under) so it
+404s cleanly and the display falls back to no destination. This is
+distinct from the 4-digit `QLK####` form (e.g. `QLK1944` → `QFA1944`,
+no digits dropped, no guessing) and the 4-digit-plus-suffix form (e.g.
+`QLK1234A` → `QFA1234A`), both still handled by the generic
+`routeCallsignAlias` prefix swap.
 - **Meandering GA traffic** from nearby small-airport feeders match
   the geometry (the constant-heading projection false-positives while
   they turn) but aren't real overflight events. Suppressed by the

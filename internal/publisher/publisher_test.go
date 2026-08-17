@@ -163,12 +163,12 @@ func TestRouteCallsign(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"QLK1944", "QFA1944"},   // QantasLink 4-digit → Qantas mainline filing
-		{"QLK1234A", "QFA1234A"}, // 4-digit + suffix: plain swap, suffix preserved
-		{"QLK205D", "QFA2205"},   // 3-digit + letter: QFA2### block, suffix dropped
-		{"QLK28D", "QFA2028"},    // 2-digit + letter: zero-padded into the QFA2### block
-		{"QLK9D", "QFA2009"},     // 1-digit + letter: zero-padded into the QFA2### block
-		{"QLK9999X", "QFA9999X"}, // 4 digits + letter: not the QLK#{1,3}L form, plain swap
+		{"QLK1944", "QFA1944"},   // QantasLink 4-digit → Qantas mainline filing, no digit dropped
+		{"QLK1234A", "QFA1234A"}, // 4-digit + suffix: plain swap, suffix preserved, no digit dropped
+		{"QLK431D", "QLK431D"},   // 3-digit + letter: truncated number, unmappable, left unmapped
+		{"QLK28D", "QLK28D"},     // 2-digit + letter: truncated number, unmappable, left unmapped
+		{"QLK9D", "QLK9D"},       // 1-digit + letter: truncated number, unmappable, left unmapped
+		{"QLK9999X", "QFA9999X"}, // 4 digits + letter: not the truncated form, plain swap
 		{"QFA75", "QFA75"},       // already mainline, unchanged
 		{"VOZ123", "VOZ123"},     // unrelated operator, unchanged
 		{"UAE3HJ", "UAE3HJ"},     // alphanumeric-suffix callsign, unchanged

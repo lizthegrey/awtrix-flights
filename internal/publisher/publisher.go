@@ -55,33 +55,46 @@ var routeCallsignAlias = map[string]string{
 }
 
 // qantasLinkSuffixForm matches QantasLink's trailing-letter callsign form
-// "QLK#L" / "QLK##L" / "QLK###L" (1-3 digits + one letter, e.g. "QLK205D" or
-// "QLK28D"). Qantas group files these under mainline "QFA2###" — the digits
-// zero-padded to 3 and prefixed with a leading "2" QantasLink number block,
-// with the trailing letter dropped — so QLK205D's route lives at QFA2205 and
-// QLK28D's lives at QFA2028, NOT the QFA205D / QFA28D a plain prefix swap
-// would produce.
+// "QLK#L" / "QLK##L" / "QLK###L" (1-3 digits + one letter, e.g. "QLK431D" or
+// "QLK28D"). This is a TRUNCATED flight number: the transponder drops the
+// leading digit(s) of the real 4-digit QF number, so from the wire callsign
+// alone we cannot tell whether "431D" means QF1431, QF2431, QF9431, etc.
 //
-// The 3-digit case (QLK205D → QFA2205) was verified against the live API when
-// this was first added. QLK28D → QFA2028 (SYD-DBO, a QantasLink Dash-8 route)
-// was verified live too, confirming the same zero-pad-then-prefix rule holds
-// for fewer digits — and confirming the previous exactly-3-digit regex was
-// the bug: QLK28D (2 digits) fell through to the generic plain-swap path
-// below and produced QFA28D, which collided with a real but wholly unrelated
-// Qantas mainline flight (QF28, AKL-SYD widebody) that has nothing to do with
-// the QantasLink turboprop that actually squawked QLK28D. This is distinct
-// from the 4-digit QLK#### form (e.g. QLK1944 → QFA1944), which keeps its
-// number unpadded and is handled by the generic routeCallsignAlias prefix
+// A prior version of this code guessed the dropped digit was always "2"
+// (zero-padding the remainder into a "QFA2###" block). That guess looked
+// safe because it round-tripped one real example (QLK205D → QFA2205, SYD-ABX)
+// without a 404 — but "doesn't 404" is not "is correct". Investigating a live
+// report of QLK431D showing an obviously-wrong LHR-adjacent destination on a
+// DH8D turboprop found the real flight was QF1431 (SYD-CBR, block "1"), not
+// the guessed QF2431 (which doesn't exist). Spot-checking further confirmed
+// the guess is unsound in general, not just wrong for this one case: querying
+// adsbdb for the SAME 1-3 digit remainder under blocks 1, 2, and 3 each
+// returns a real, live, entirely unrelated Qantas(-group) flight —
+// e.g. "128" resolves under block nothing/"1" to QF128 (HKG-SYD widebody),
+// under "2" to QF2028 (SYD-DBO turboprop), under "3" to QF3028 (a US
+// codeshare, MSP-DFW). Qantas's flight-number space is dense enough that
+// almost any guessed leading digit lands on SOME real flight, just not the
+// right one — so guessing is worse than useless, it's confidently wrong.
+//
+// There is no way to recover the dropped digit(s) from the wire callsign
+// alone, so we deliberately do NOT remap this form at all: the callsign is
+// queried as-is ("QLK...", a prefix adsbdb has zero entries under) so the
+// lookup 404s cleanly and the display falls back to "no destination" rather
+// than risking a plausible-looking wrong one. This is distinct from the
+// 4-digit QLK#### form (e.g. QLK1944 → QFA1944, no digits dropped, no
+// guessing involved) and the 4-digit-plus-suffix form (e.g. QLK1234A →
+// QFA1234A), both handled safely by the generic routeCallsignAlias prefix
 // swap below.
-var qantasLinkSuffixForm = regexp.MustCompile(`^QLK(\d{1,3})[A-Z]$`)
+var qantasLinkSuffixForm = regexp.MustCompile(`^QLK\d{1,3}[A-Z]$`)
 
 // routeCallsign returns the callsign to query adsbdb with. QantasLink's
-// trailing-letter form needs a digit remap (see qantasLinkSuffixForm); every
-// other aliased operator is a plain 3-letter prefix swap per routeCallsignAlias.
-// Input must already match airlineCallsign (3 letters + digits + optional suffix).
+// truncated trailing-letter form is deliberately left unmapped (see
+// qantasLinkSuffixForm); every other aliased operator is a plain 3-letter
+// prefix swap per routeCallsignAlias. Input must already match
+// airlineCallsign (3 letters + digits + optional suffix).
 func routeCallsign(callsign string) string {
-	if m := qantasLinkSuffixForm.FindStringSubmatch(callsign); m != nil {
-		return fmt.Sprintf("QFA2%03s", m[1])
+	if qantasLinkSuffixForm.MatchString(callsign) {
+		return callsign
 	}
 	if alias, ok := routeCallsignAlias[callsign[:3]]; ok {
 		return alias + callsign[3:]
