@@ -193,16 +193,38 @@ func TestResolveRoute_QantasLinkSuffixForm(t *testing.T) {
 			name:     "single block hit resolves",
 			callsign: "QLK431D",
 			routes: map[string]adsbdb.Route{
-				"QFA1431": {DestIATA: "CBR"}, // QFA2431 deliberately absent: unambiguous
+				"QFA1431": {OriginICAO: "YSSY", DestIATA: "CBR"}, // QFA2431 deliberately absent: unambiguous
 			},
 			wantDest: "CBR",
 		},
 		{
-			name:     "both blocks hit is ambiguous, not resolved",
+			name:     "SYD-origin candidate wins over one that doesn't touch YSSY",
 			callsign: "QLK205D",
 			routes: map[string]adsbdb.Route{
-				"QFA1205": {DestIATA: "MEL"}, // real CBR-MEL flight
-				"QFA2205": {DestIATA: "ABX"}, // real SYD-ABX flight — can't tell which is true
+				// real CBR-MEL flight; neither endpoint is YSSY, geographically
+				// implausible for this geometry (CBR-MEL has no reason to detour
+				// through Sydney)
+				"QFA1205": {OriginICAO: "YSCB", DestIATA: "MEL", DestICAO: "YMML"},
+				// real SYD-ABX flight; origin YSSY, the plausible one
+				"QFA2205": {OriginICAO: "YSSY", DestIATA: "ABX", DestICAO: "YMAY"},
+			},
+			wantDest: "ABX",
+		},
+		{
+			name:     "both candidates touch YSSY: still a tie, not resolved",
+			callsign: "QLK444D",
+			routes: map[string]adsbdb.Route{
+				"QFA1444": {OriginICAO: "YSSY", DestIATA: "CBR"},
+				"QFA2444": {OriginICAO: "YSSY", DestIATA: "DBO"},
+			},
+			wantErr: true,
+		},
+		{
+			name:     "neither candidate touches YSSY: still a tie, not resolved",
+			callsign: "QLK555D",
+			routes: map[string]adsbdb.Route{
+				"QFA1555": {OriginICAO: "YSCB", DestIATA: "MEL"},
+				"QFA2555": {OriginICAO: "YBBN", DestIATA: "GLT"},
 			},
 			wantErr: true,
 		},

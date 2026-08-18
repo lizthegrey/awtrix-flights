@@ -140,14 +140,25 @@ originally built on was never actually verified correct, just "not 404".
 
 `internal/publisher`'s `resolveQantasLinkSuffixRoute` now queries the two
 blocks confirmed to be real QantasLink ranges (`qantasLinkSuffixBlocks`:
-`"2"`, then `"1"` — order doesn't matter, both are always tried) and only
-trusts the result if **exactly one** resolves; two hits (or zero) is
-ambiguous/unknown and falls back to no destination rather than guess.
-Block `3` was checked and found to be unrelated US codeshare traffic, not
-QantasLink — deliberately excluded; don't extend `qantasLinkSuffixBlocks`
-without an equally concrete positive example. This costs up to two live
-adsbdb calls per uncached truncated callsign (cached under the original
-wire callsign once resolved). This is distinct from the 4-digit `QLK####`
+`"2"`, then `"1"` — order doesn't matter, both are always tried), then
+breaks ties with `sydneyEndpointPriority`: the observer sits directly under
+YSSY's departure corridor and the filter already drops descending aircraft
+(`IgnoreDescending`), so anything reaching this code is a Sydney departure
+or a transit, never an arrival. A resolved candidate whose origin is YSSY
+is the plausible case (rank 0); destination YSSY (a transit, or the rarer
+go-around) is next (rank 1); touching YSSY at neither end (rank 2) means
+the flight has no reason to be anywhere near the observer at all — e.g.
+`205` → `QFA1205` is a real CBR-MEL flight, but Canberra-to-Melbourne
+doesn't detour north through Sydney, so it loses to `QFA2205` (SYD-ABX,
+rank 0). The best rank is only trusted when exactly one candidate holds
+it; a rank tie (both touch YSSY the same way, or neither does) is still
+genuinely ambiguous and falls back to no destination rather than guess
+further. Block `3` was checked and found to be unrelated US codeshare
+traffic, not QantasLink — deliberately excluded; don't extend
+`qantasLinkSuffixBlocks` without an equally concrete positive example.
+This costs up to two live adsbdb calls per uncached truncated callsign
+(cached under the original wire callsign once resolved). This is distinct
+from the 4-digit `QLK####`
 form (e.g. `QLK1944` → `QFA1944`, no digits dropped, no guessing) and the
 4-digit-plus-suffix form (e.g. `QLK1234A` → `QFA1234A`), both still
 handled by the generic `routeCallsignAlias` prefix swap.

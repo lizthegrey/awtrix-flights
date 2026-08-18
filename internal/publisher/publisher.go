@@ -79,16 +79,21 @@ var routeCallsignAlias = map[string]string{
 // There is no way to recover the dropped digit(s) from the wire callsign
 // alone, and the two blocks confirmed to be real QantasLink number ranges
 // (see qantasLinkSuffixBlocks) both often have some flight filed under the
-// same 1-3 digit remainder — so we can't just always guess one block either.
-// Instead resolveQantasLinkSuffixRoute queries BOTH candidate blocks and
-// only trusts the result if EXACTLY ONE resolves: two hits means we can't
-// tell which is real (ambiguous, e.g. the "205" remainder: QFA1205 is a real
-// CBR-MEL flight AND QFA2205 is a real SYD-ABX flight — picking either would
-// sometimes be confidently wrong), so we fall back to "no destination"
-// rather than guess. This is distinct from the 4-digit QLK#### form (e.g.
-// QLK1944 → QFA1944, no digits dropped, no guessing involved) and the
-// 4-digit-plus-suffix form (e.g. QLK1234A → QFA1234A), both handled safely
-// by the generic routeCallsignAlias prefix swap below.
+// same 1-3 digit remainder — so we can't just always guess one block either
+// (e.g. the "205" remainder: QFA1205 is a real CBR-MEL flight AND QFA2205 is
+// a real SYD-ABX flight). resolveQantasLinkSuffixRoute queries every
+// candidate block and breaks ties using sydneyEndpointPriority: the observer
+// is directly under YSSY's departure corridor and the filter already drops
+// descending aircraft, so a resolved candidate touching YSSY (especially as
+// origin) is far more plausible than one that doesn't — a CBR-MEL flight has
+// no reason to detour north through Sydney. Only when the best-ranked
+// candidate is uniquely best (e.g. "205" → QFA2205, SYD-ABX, since CBR-MEL
+// doesn't touch YSSY at all) do we use it; a rank tie is still genuinely
+// ambiguous and falls back to "no destination" rather than guess further.
+// This is distinct from the 4-digit QLK#### form (e.g. QLK1944 → QFA1944,
+// no digits dropped, no guessing involved) and the 4-digit-plus-suffix form
+// (e.g. QLK1234A → QFA1234A), both handled safely by the generic
+// routeCallsignAlias prefix swap below.
 var qantasLinkSuffixForm = regexp.MustCompile(`^QLK(\d{1,3})[A-Z]$`)
 
 // qantasLinkSuffixBlocks lists the QantasLink number blocks worth guessing
@@ -311,12 +316,34 @@ func (p *Publisher) resolveRoute(ctx context.Context, callsign string) (adsbdb.R
 	return r, nil
 }
 
-// resolveQantasLinkSuffixRoute tries both candidate number blocks for a
+// sydneyEndpointPriority ranks a candidate route by how plausible it is for
+// an aircraft that just matched the overhead-Ashfield geometry. The filter
+// already drops descending aircraft (IgnoreDescending, see CLAUDE.md), so
+// anything reaching this code is a Sydney departure or a transit — never an
+// arrival — which means a route that doesn't touch YSSY at all (e.g. a
+// CBR-MEL hop) would have no reason to be anywhere near the observer:
+// Canberra to Melbourne doesn't detour north through Sydney. Lower is more
+// plausible: origin YSSY (a departure, the common case) beats destination
+// YSSY (a transit or the rarer go-around/missed-approach case) beats neither.
+func sydneyEndpointPriority(r adsbdb.Route) int {
+	switch {
+	case r.OriginICAO == "YSSY":
+		return 0
+	case r.DestICAO == "YSSY":
+		return 1
+	default:
+		return 2
+	}
+}
+
+// resolveQantasLinkSuffixRoute tries every candidate number block for a
 // truncated QantasLink callsign (see qantasLinkSuffixForm/qantasLinkSuffixBlocks)
-// and only trusts the result if exactly one block resolves to a route —
-// two hits means the true block is ambiguous, so it returns ErrNotFound
-// rather than guess. Cached (and cache-checked) under the original wire
-// callsign, since the resolved candidate varies per lookup.
+// and, among whichever resolve, picks the one with the best (lowest)
+// sydneyEndpointPriority — but only if that best rank is held by exactly one
+// candidate. A rank tie (e.g. both candidates touch YSSY, or neither does)
+// means we still can't tell which is real, so it returns ErrNotFound rather
+// than guess. Cached (and cache-checked) under the original wire callsign,
+// since the resolved candidate varies per lookup.
 func (p *Publisher) resolveQantasLinkSuffixRoute(ctx context.Context, callsign string) (adsbdb.Route, error) {
 	if r, err := p.Cache.GetRoute(ctx, callsign); err == nil {
 		return r, nil
@@ -324,16 +351,26 @@ func (p *Publisher) resolveQantasLinkSuffixRoute(ctx context.Context, callsign s
 	m := qantasLinkSuffixForm.FindStringSubmatch(callsign)
 	padded := fmt.Sprintf("%03s", m[1])
 
-	var found adsbdb.Route
-	hits := 0
+	var candidates []adsbdb.Route
 	for _, block := range qantasLinkSuffixBlocks {
 		r, err := p.Routes.Lookup(ctx, "QFA"+block+padded)
 		if err != nil {
 			continue
 		}
-		found, hits = r, hits+1
+		candidates = append(candidates, r)
 	}
-	if hits != 1 {
+
+	var found adsbdb.Route
+	bestRank, bestCount := 3, 0
+	for _, r := range candidates {
+		switch rank := sydneyEndpointPriority(r); {
+		case rank < bestRank:
+			bestRank, bestCount, found = rank, 1, r
+		case rank == bestRank:
+			bestCount++
+		}
+	}
+	if bestCount != 1 {
 		return adsbdb.Route{}, adsbdb.ErrNotFound
 	}
 	if err := p.Cache.PutRoute(ctx, callsign, found, p.Cfg.RouteCacheTTL); err != nil {
